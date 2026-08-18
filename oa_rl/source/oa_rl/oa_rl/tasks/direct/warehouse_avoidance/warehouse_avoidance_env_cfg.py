@@ -144,6 +144,10 @@ class WarehouseAvoidanceEnvCfg(DirectRLEnvCfg):
     # this is the classical baseline for the same harness/metrics (no
     # training needed, any rollout — e.g. random_agent.py — measures it).
     use_residual_action = True
+    # Compatibility mode for evaluating the pre-residual direct-action
+    # checkpoint. It restores its old action semantics and 20-value
+    # observation (without classical_vel_xy). New training leaves this False.
+    standalone_policy_action = False
     # Below max_speed_mps so the residual has real headroom to add on top
     # rather than immediately saturating the total-speed clamp.
     classical_speed_mps = 1.0
@@ -175,3 +179,18 @@ class WarehouseAvoidanceEnvCfg(DirectRLEnvCfg):
     # terms operate at, deliberately small enough that it discourages rather
     # than forbids using the residual where it's actually earning its keep.
     residual_penalty_scale = -0.5
+
+    # Evaluation-only instrumentation. Disabled for training so copying
+    # completed episode records to CPU cannot affect training throughput.
+    collect_evaluation_metrics = False
+    # RSL-RL training benefits from staggered initial episode lengths. A
+
+    # Held-out robustness evaluation. Defaults are identity/no-noise so
+    # training and nominal evaluation remain unchanged. The evaluator selects
+    # documented moderate/severe profiles explicitly.
+    spawn_jitter_xy_m = (0.0, 0.0)
+    actuator_gain_range = (1.0, 1.0)
+    wind_velocity_max_mps = 0.0
+    observation_noise_std = 0.0
+    # controlled evaluation must start every episode at step zero.
+    randomize_initial_episode_length = True

@@ -1,0 +1,128 @@
+#!/usr/bin/env python3
+"""Build a success-aware robustness comparison from evaluator artifacts."""
+
+from __future__ import annotations
+
+import argparse
+import csv
+import json
+import statistics
+from pathlib import Path
+
+
+def episode_csv_path(result_path: Path) -> Path:
+    return result_path.with_name(f"{result_path.stem}_episodes.csv")
+
+
+def as_bool(value: str) -> bool:
+    return value.strip().lower() in {"1", "1.0", "true"}
+
+
+def successful_rows(result_path: Path) -> list[dict[str, str]]:
+    csv_path = episode_csv_path(result_path)
+    with csv_path.open(newline="") as stream:
+        return [row for row in csv.DictReader(stream) if as_bool(row["goal_reached"])]
+
+
+def successful_mean(rows: list[dict[str, str]], key: str) -> float:
+    if not rows:
+        return float("nan")
+    return statistics.fmean(float(row[key]) for row in rows)
+
+
+def controller_latency_ms(result: dict) -> float:
+    compute = result["compute"]
+    latency = 0.0
+    if compute["classical_lookup_batch1"] is not None:
+        latency += float(compute["classical_lookup_batch1"]["mean_ms"])
+    if compute["policy_inference_batch1"] is not None:
+        latency += float(compute["policy_inference_batch1"]["mean_ms"])
+    return latency
+
+
+def make_row(label: str, result_path: Path, result: dict) -> dict[str, float | str]:
+    completed = successful_rows(result_path)
+    success_rate = float(result["summary"]["success_rate"])
+    efficiency = successful_mean(completed, "trajectory_efficiency")
+    return {
+        "controller": label,
+        "success_rate": success_rate,
+        "collision_rate": float(result["summary"]["collision_rate"]),
+        "out_of_bounds_rate": float(result["summary"]["out_of_bounds_rate"]),
+        "time_out_rate": float(result["summary"]["time_out_rate"]),
+        "successful_episodes": len(completed),
+        "successful_duration_s": successful_mean(completed, "duration_s"),
+        "successful_path_length_m": successful_mean(completed, "path_length_m"),
+        "successful_trajectory_efficiency": efficiency,
+        "reliability_adjusted_efficiency": success_rate * efficiency,
+        "successful_command_variation_rate_mps2": successful_mean(
+            completed, "command_variation_rate_mps2"
+        ),
+        "successful_min_clearance_m": successful_mean(completed, "min_clearance_m"),
+        "successful_mean_residual_mps": successful_mean(completed, "mean_residual_mps"),
+        "decision_latency_ms": controller_latency_ms(result),
+    }
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--classical", required=True)
+    parser.add_argument("--standalone", required=True)
+    parser.add_argument("--residual", required=True)
+    parser.add_argument("--output_prefix", required=True)
+    args = parser.parse_args()
+
+    sources = {
+        "Classical": Path(args.classical),
+        "Standalone RL": Path(args.standalone),
+        "Residual RL": Path(args.residual),
+    }
+    results = {name: json.loads(path.read_text()) for name, path in sources.items()}
+    profiles = {result.get("robustness_profile", "nominal") for result in results.values()}
+    if len(profiles) != 1:
+        raise ValueError(f"Input evaluations use different robustness profiles: {sorted(profiles)}")
+    profile = profiles.pop()
+    rows = [make_row(name, sources[name], results[name]) for name in sources]
+
+    output_prefix = Path(args.output_prefix)
+    output_prefix.parent.mkdir(parents=True, exist_ok=True)
+    csv_path = output_prefix.with_suffix(".csv")
+    md_path = output_prefix.with_suffix(".md")
+    with csv_path.open("w", newline="") as stream:
+        writer = csv.DictWriter(stream, fieldnames=list(rows[0]))
+        writer.writeheader()
+        writer.writerows(rows)
+
+    lines = [
+        f"# {profile.title()} Robustness Comparison",
+        "",
+        "Trajectory metrics are conditioned on successful episodes. Reliability-adjusted",
+        "efficiency is success rate multiplied by successful-trajectory efficiency, so an",
+        "early collision cannot appear artificially efficient.",
+        "",
+        "| Controller | Success | Collision | Successful time (s) | Successful path (m) | Successful efficiency | Reliability-adjusted efficiency | Command variation (m/s²) | Min clearance (m) | Mean residual (m/s) |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+    ]
+    for row in rows:
+        lines.append(
+            f"| {row['controller']} | {row['success_rate']:.1%} | {row['collision_rate']:.1%} | "
+            f"{row['successful_duration_s']:.3f} | {row['successful_path_length_m']:.3f} | "
+            f"{row['successful_trajectory_efficiency']:.4f} | "
+            f"{row['reliability_adjusted_efficiency']:.4f} | "
+            f"{row['successful_command_variation_rate_mps2']:.3f} | "
+            f"{row['successful_min_clearance_m']:.3f} | "
+            f"{row['successful_mean_residual_mps']:.3f} |"
+        )
+
+    lines.extend(["", "## Source evaluations", ""])
+    for name, path in sources.items():
+        lines.append(f"- {name}: `{path}`")
+    lines.append("")
+    md_path.write_text("\n".join(lines))
+
+    print(md_path)
+    print(csv_path)
+
+
+if __name__ == "__main__":
+    main()

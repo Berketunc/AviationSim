@@ -1,0 +1,103 @@
+{
+  "mode": "standalone",
+  "task": "Isaac-WarehouseAvoidance-Direct-v0",
+  "checkpoint": "/home/berke/AviationSim/oa_rl/logs/rsl_rl/warehouse_avoidance_direct/2026-07-22_17-17-19/model_4999.pt",
+  "checkpoint_sha256": "d3c20e9dcc5d798d18c1ed50cdbb16d2c8bb8cd08e7f213a19d9c59d9fdf3d1e",
+  "git_commit": "f6f24241733e98736f7f1cc1cb8ff88dca4afd7f",
+  "seed": 42,
+  "num_envs": 1024,
+  "episodes": 1024,
+  "step_dt_s": 0.04,
+  "wall_time_s": 3.484603238001,
+  "control_steps": 342,
+  "simulated_env_steps": 350208,
+  "simulated_env_steps_per_second": 100501.54237958597,
+  "compute": {
+    "flow_field_build_ms": 0.0,
+    "classical_lookup_batch1": null,
+    "policy_inference_batch1": {
+      "mean_ms": 0.20041472020745277,
+      "p50_ms": 0.19833600521087646,
+      "p95_ms": 0.21007999777793884,
+      "iterations": 500
+    }
+  },
+  "summary": {
+    "success_rate": 1.0,
+    "collision_rate": 0.0,
+    "out_of_bounds_rate": 0.0,
+    "time_out_rate": 0.0,
+    "episode_steps": {
+      "mean": 342.0,
+      "std": 0.0,
+      "p50": 342.0,
+      "p95": 342.0,
+      "min": 342.0,
+      "max": 342.0
+    },
+    "duration_s": {
+      "mean": 13.679994583129883,
+      "std": 4.76837158203125e-06,
+      "p50": 13.679999351501465,
+      "p95": 13.679999351501465,
+      "min": 13.679999351501465,
+      "max": 13.679999351501465
+    },
+    "final_distance_to_goal_m": {
+      "mean": 0.25298312306404114,
+      "std": 0.001288747531361878,
+      "p50": 0.2528061866760254,
+      "p95": 0.2575027346611023,
+      "min": 0.2521034777164459,
+      "max": 0.2575303912162781
+    },
+    "path_length_m": {
+      "mean": 20.520814895629883,
+      "std": 0.0011781495995819569,
+      "p50": 20.520856857299805,
+      "p95": 20.523189544677734,
+      "min": 20.51945686340332,
+      "max": 20.523338317871094
+    },
+    "trajectory_efficiency": {
+      "mean": 0.8138079047203064,
+      "std": 4.671404167311266e-05,
+      "p50": 0.8138062357902527,
+      "p95": 0.813857913017273,
+      "min": 0.8137078285217285,
+      "max": 0.8138617277145386
+    },
+    "command_variation_mps": {
+      "mean": 128.91172790527344,
+      "std": 0.020480582490563393,
+      "p50": 128.9084930419922,
+      "p95": 128.94972229003906,
+      "min": 128.88296508789062,
+      "max": 128.95021057128906
+    },
+    "command_variation_rate_mps2": {
+      "mean": 9.423372268676758,
+      "std": 0.0014970600605010986,
+      "p50": 9.423135757446289,
+      "p95": 9.426149368286133,
+      "min": 9.421269416809082,
+      "max": 9.426185607910156
+    },
+    "min_clearance_m": {
+      "mean": 0.07532210648059845,
+      "std": 0.00011387863924028352,
+      "p50": 0.07530954480171204,
+      "p95": 0.07551968097686768,
+      "min": 0.07513713836669922,
+      "max": 0.07551968097686768
+    },
+    "mean_residual_mps": {
+      "mean": 0.0,
+      "std": 0.0,
+      "p50": 0.0,
+      "p95": 0.0,
+      "min": 0.0,
+      "max": 0.0
+    }
+  }
+}

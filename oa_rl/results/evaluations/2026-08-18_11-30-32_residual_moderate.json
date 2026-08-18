@@ -1,0 +1,121 @@
+{
+  "mode": "residual",
+  "task": "Isaac-WarehouseAvoidance-Direct-v0",
+  "checkpoint": "/home/berke/AviationSim/oa_rl/logs/rsl_rl/warehouse_avoidance_direct/2026-07-23_13-05-22_residual-penalized/model_4999.pt",
+  "checkpoint_sha256": "2a85b6e256b7bf544005c6873d1a26c3b61b031deba1a5eee54ccb28b0eb93c7",
+  "git_commit": "f6f24241733e98736f7f1cc1cb8ff88dca4afd7f",
+  "seed": 42,
+  "robustness_profile": "moderate",
+  "robustness_parameters": {
+    "spawn_jitter_xy_m": [
+      0.25,
+      0.75
+    ],
+    "actuator_gain_range": [
+      0.85,
+      1.15
+    ],
+    "wind_velocity_max_mps": 0.1,
+    "observation_noise_std": 0.02
+  },
+  "num_envs": 1024,
+  "episodes": 1024,
+  "step_dt_s": 0.04,
+  "wall_time_s": 5.375461814001028,
+  "control_steps": 459,
+  "simulated_env_steps": 470016,
+  "simulated_env_steps_per_second": 87437.32469195253,
+  "compute": {
+    "flow_field_build_ms": 35.14379699845449,
+    "classical_lookup_batch1": {
+      "mean_ms": 0.13911097586154939,
+      "p50_ms": 0.1372160017490387,
+      "p95_ms": 0.14697599411010742,
+      "iterations": 500
+    },
+    "policy_inference_batch1": {
+      "mean_ms": 0.20262342390418053,
+      "p50_ms": 0.20150400698184967,
+      "p95_ms": 0.2123199999332428,
+      "iterations": 500
+    }
+  },
+  "summary": {
+    "success_rate": 1.0,
+    "collision_rate": 0.0,
+    "out_of_bounds_rate": 0.0,
+    "time_out_rate": 0.0,
+    "episode_steps": {
+      "mean": 315.388671875,
+      "std": 34.61266326904297,
+      "p50": 312.0,
+      "p95": 375.0,
+      "min": 251.0,
+      "max": 459.0
+    },
+    "duration_s": {
+      "mean": 12.615546226501465,
+      "std": 1.3845064640045166,
+      "p50": 12.479999542236328,
+      "p95": 15.0,
+      "min": 10.039999961853027,
+      "max": 18.35999870300293
+    },
+    "final_distance_to_goal_m": {
+      "mean": 0.27518945932388306,
+      "std": 0.015891453251242638,
+      "p50": 0.27654391527175903,
+      "p95": 0.29789263010025024,
+      "min": 0.23585645854473114,
+      "max": 0.2999635338783264
+    },
+    "path_length_m": {
+      "mean": 17.712961196899414,
+      "std": 0.628112256526947,
+      "p50": 17.592926025390625,
+      "p95": 19.254812240600586,
+      "min": 16.845664978027344,
+      "max": 20.408588409423828
+    },
+    "trajectory_efficiency": {
+      "mean": 0.9444578886032104,
+      "std": 0.030759425833821297,
+      "p50": 0.9432224035263062,
+      "p95": 0.9741814136505127,
+      "min": 0.821596086025238,
+      "max": 0.9777015447616577
+    },
+    "command_variation_mps": {
+      "mean": 34.041595458984375,
+      "std": 21.600191116333008,
+      "p50": 28.48699188232422,
+      "p95": 88.78842163085938,
+      "min": 11.939535140991211,
+      "max": 152.84884643554688
+    },
+    "command_variation_rate_mps2": {
+      "mean": 2.6328999996185303,
+      "std": 1.4239435195922852,
+      "p50": 2.269036293029785,
+      "p95": 6.216160774230957,
+      "min": 0.9570415616035461,
+      "max": 8.325100898742676
+    },
+    "min_clearance_m": {
+      "mean": 0.40986713767051697,
+      "std": 0.04511978104710579,
+      "p50": 0.3936092257499695,
+      "p95": 0.47014257311820984,
+      "min": 0.34636232256889343,
+      "max": 0.4950767457485199
+    },
+    "mean_residual_mps": {
+      "mean": 0.5488793849945068,
+      "std": 0.018327929079532623,
+      "p50": 0.5614504814147949,
+      "p95": 0.5737000107765198,
+      "min": 0.5113081336021423,
+      "max": 0.5788736343383789
+    }
+  }
+}

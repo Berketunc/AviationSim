@@ -35,6 +35,8 @@ required.
 
 from __future__ import annotations
 
+import math
+
 import torch
 
 import isaaclab.sim as sim_utils
@@ -56,6 +58,7 @@ from .warehouse_avoidance_env_cfg import (
     PILLAR_SIZE,
     PILLAR_XY,
     PILLAR_Z,
+    SPAWN_XY,
     WALLS,
     WarehouseAvoidanceEnvCfg,
 )
@@ -97,16 +100,18 @@ class WarehouseAvoidanceEnv(DirectRLEnv):
         # Classical half of the residual architecture (see module docstring
         # and classical_controller.py) — one Dijkstra solve at construction,
         # queried every step in _pre_physics_step/_get_observations.
-        self._flow_field = GoalFlowField(
-            grid_origin_xy=GRID_ORIGIN[:2],
-            grid_size_xy=GRID_SIZE[:2],
-            goal_xy=GOAL_XY,
-            pillar_xy=list(PILLAR_XY),
-            pillar_half_xy=(PILLAR_SIZE[0] / 2, PILLAR_SIZE[1] / 2),
-            wall_xy=[w[0][:2] for w in WALLS],
-            wall_half_xy=[(s[0] / 2, s[1] / 2) for _, s in WALLS],
-            device=self.device,
-        )
+        self._flow_field = None
+        if not self.cfg.standalone_policy_action:
+            self._flow_field = GoalFlowField(
+                grid_origin_xy=GRID_ORIGIN[:2],
+                grid_size_xy=GRID_SIZE[:2],
+                goal_xy=GOAL_XY,
+                pillar_xy=list(PILLAR_XY),
+                pillar_half_xy=(PILLAR_SIZE[0] / 2, PILLAR_SIZE[1] / 2),
+                wall_xy=[w[0][:2] for w in WALLS],
+                wall_half_xy=[(s[0] / 2, s[1] / 2) for _, s in WALLS],
+                device=self.device,
+            )
 
         self._episode_sums = {
             key: torch.zeros(self.num_envs, dtype=torch.float, device=self.device)
@@ -116,6 +121,23 @@ class WarehouseAvoidanceEnv(DirectRLEnv):
         # controller) — tracked separately from _episode_sums so it logs
         # under "Metrics/" rather than "Episode_Reward/" in _reset_idx.
         self._residual_magnitude_sum = torch.zeros(self.num_envs, device=self.device)
+
+        # Optional evaluation instrumentation. Records are copied in batches
+        # only when episodes finish, then consumed by scripts/evaluate.py.
+        self._completed_episode_batches: list[dict[str, torch.Tensor]] = []
+        self._eval_path_length = torch.zeros(self.num_envs, device=self.device)
+        self._eval_command_variation = torch.zeros(self.num_envs, device=self.device)
+        self._eval_min_clearance = torch.full((self.num_envs,), torch.inf, device=self.device)
+        self._eval_prev_pos_xy = torch.tensor(SPAWN_XY, device=self.device).repeat(self.num_envs, 1)
+        self._eval_start_pos_xy = torch.tensor(SPAWN_XY, device=self.device).repeat(self.num_envs, 1)
+        self._eval_prev_command_xy = torch.zeros(self.num_envs, 2, device=self.device)
+
+        # Dedicated RNG keeps held-out conditions identical across controller
+        # modes even though policy construction consumes the global RNG.
+        self._robustness_rng = torch.Generator(device=self.device)
+        self._robustness_rng.manual_seed(int(self.cfg.seed) + 10_003)
+        self._actuator_gain = torch.ones(self.num_envs, 1, device=self.device)
+        self._wind_velocity_xy = torch.zeros(self.num_envs, 2, device=self.device)
 
         self.set_debug_vis(self.cfg.debug_vis)
 
@@ -149,19 +171,24 @@ class WarehouseAvoidanceEnv(DirectRLEnv):
         light_cfg.func("/World/Light", light_cfg)
 
     def _classical_velocity_xy(self) -> torch.Tensor:
+        if self._flow_field is None:
+            raise RuntimeError("The classical controller is disabled in standalone policy mode.")
         pos_local_xy = self._local_pos()[:, :2]
         return self._flow_field.direction_at(pos_local_xy) * self.cfg.classical_speed_mps
 
     def _pre_physics_step(self, actions: torch.Tensor):
-        classical_vel_xy = self._classical_velocity_xy()
-
-        if self.cfg.use_residual_action:
-            residual = actions.clone().clamp(-1.0, 1.0) * self.cfg.residual_action_scale
-            self._residual_magnitude_sum += residual.norm(dim=-1) * self.step_dt
-            commanded = classical_vel_xy + residual
+        if self.cfg.standalone_policy_action:
+            residual = torch.zeros_like(actions)
+            commanded = actions.clone().clamp(-1.0, 1.0) * self.cfg.max_speed_mps
         else:
-            residual = torch.zeros_like(classical_vel_xy)
-            commanded = classical_vel_xy
+            classical_vel_xy = self._classical_velocity_xy()
+            if self.cfg.use_residual_action:
+                residual = actions.clone().clamp(-1.0, 1.0) * self.cfg.residual_action_scale
+                self._residual_magnitude_sum += residual.norm(dim=-1) * self.step_dt
+                commanded = classical_vel_xy + residual
+            else:
+                residual = torch.zeros_like(classical_vel_xy)
+                commanded = classical_vel_xy
         self._last_residual_xy = residual
 
         # Combined (classical + residual) is what's physically capped at
@@ -169,6 +196,11 @@ class WarehouseAvoidanceEnv(DirectRLEnv):
         speed = commanded.norm(dim=-1, keepdim=True)
         scale = torch.clamp(self.cfg.max_speed_mps / speed.clamp(min=1e-6), max=1.0)
         self._commanded_vel_xy = commanded * scale
+        if self.cfg.collect_evaluation_metrics:
+            self._eval_command_variation += torch.linalg.norm(
+                self._commanded_vel_xy - self._eval_prev_command_xy, dim=-1
+            )
+            self._eval_prev_command_xy.copy_(self._commanded_vel_xy)
 
     def _apply_action(self):
         # Re-issued every physics substep (DirectRLEnv.step()'s decimation
@@ -182,7 +214,8 @@ class WarehouseAvoidanceEnv(DirectRLEnv):
             -self.cfg.altitude_hold_max_speed_ms,
             self.cfg.altitude_hold_max_speed_ms,
         )
-        lin_vel = torch.cat([self._commanded_vel_xy, vz.unsqueeze(-1)], dim=-1)
+        disturbed_vel_xy = self._commanded_vel_xy * self._actuator_gain + self._wind_velocity_xy
+        lin_vel = torch.cat([disturbed_vel_xy, vz.unsqueeze(-1)], dim=-1)
         angular = torch.zeros_like(lin_vel)
         self._robot.write_root_velocity_to_sim(torch.cat([lin_vel, angular], dim=-1))
 
@@ -210,10 +243,6 @@ class WarehouseAvoidanceEnv(DirectRLEnv):
         pos_local = self._local_pos()
         goal_rel_xy = self._goal_xy - pos_local[:, :2]
         lin_vel_xy = self._robot.data.root_lin_vel_w[:, :2]
-        # So the policy can see what it's correcting, not just infer it —
-        # standard practice for residual-on-a-base-controller architectures.
-        classical_vel_xy = self._classical_velocity_xy()
-
         drone_xy = pos_local[:, :2].unsqueeze(1)
         rel_xy = self._pillar_xy.unsqueeze(0) - drone_xy
         dist = torch.norm(rel_xy, dim=-1)
@@ -233,7 +262,19 @@ class WarehouseAvoidanceEnv(DirectRLEnv):
             dim=-1,
         )
 
-        obs = torch.cat([goal_rel_xy, lin_vel_xy, classical_vel_xy, nearest_rel_flat, clearance], dim=-1)
+        if self.cfg.standalone_policy_action:
+            # Exact 20-value ordering used by the pre-residual checkpoint.
+            obs = torch.cat([goal_rel_xy, lin_vel_xy, nearest_rel_flat, clearance], dim=-1)
+        else:
+            # Let a residual policy see what the base controller proposes.
+            classical_vel_xy = self._classical_velocity_xy()
+            obs = torch.cat([goal_rel_xy, lin_vel_xy, classical_vel_xy, nearest_rel_flat, clearance], dim=-1)
+        if self.cfg.observation_noise_std > 0.0:
+            obs = obs + torch.randn(
+                obs.shape,
+                device=self.device,
+                generator=self._robustness_rng,
+            ) * self.cfg.observation_noise_std
         return {"policy": obs}
 
     @staticmethod
@@ -245,6 +286,14 @@ class WarehouseAvoidanceEnv(DirectRLEnv):
         pos_local = self._local_pos()
         dist_to_goal = torch.linalg.norm(self._goal_xy - pos_local[:, :2], dim=-1)
         potential = self._potential(dist_to_goal)
+
+        if self.cfg.collect_evaluation_metrics:
+            pos_xy = pos_local[:, :2]
+            self._eval_path_length += torch.linalg.norm(pos_xy - self._eval_prev_pos_xy, dim=-1)
+            self._eval_prev_pos_xy.copy_(pos_xy)
+            self._eval_min_clearance = torch.minimum(
+                self._eval_min_clearance, self._obstacle_clearance(pos_xy) - DRONE_COLLISION_RADIUS
+            )
 
         # Potential-based shaping (Ng, Harada & Russell 1999): reward the
         # *change* in potential each step rather than raw proximity. A flat
@@ -309,7 +358,45 @@ class WarehouseAvoidanceEnv(DirectRLEnv):
             env_ids = self._robot._ALL_INDICES
 
         pos_local_xy = (self._robot.data.root_pos_w[env_ids] - self._terrain.env_origins[env_ids])[:, :2]
-        final_distance_to_goal = torch.linalg.norm(self._goal_xy - pos_local_xy, dim=1).mean()
+        final_distances = torch.linalg.norm(self._goal_xy - pos_local_xy, dim=1)
+        final_distance_to_goal = final_distances.mean()
+
+        if self.cfg.collect_evaluation_metrics:
+            completed = self.episode_length_buf[env_ids] > 0
+            completed_ids = env_ids[completed]
+            if len(completed_ids) > 0:
+                steps = self.episode_length_buf[completed_ids].clone()
+                duration_s = steps.float() * self.step_dt
+                # Episodes end at the goal-region edge, so 16.7m is the
+                # ideal lower bound, not the full 17m center-to-center span.
+                ideal_distance_m = (
+                    torch.linalg.norm(
+                        self._goal_xy.unsqueeze(0) - self._eval_start_pos_xy[completed_ids], dim=-1
+                    )
+                    - GOAL_REACHED_RADIUS
+                ).clamp(min=0.0)
+                path_length = self._eval_path_length[completed_ids].clone()
+                batch = {
+                    "goal_reached": self._goal_reached[completed_ids].clone(),
+                    "collision": self._collided[completed_ids].clone(),
+                    "out_of_bounds": self._out_of_bounds[completed_ids].clone(),
+                    "time_out": self.reset_time_outs[completed_ids].clone(),
+                    "episode_steps": steps,
+                    "duration_s": duration_s,
+                    "final_distance_to_goal_m": final_distances[completed].clone(),
+                    "path_length_m": path_length,
+                    "trajectory_efficiency": ideal_distance_m / path_length.clamp(min=1e-6),
+                    "command_variation_mps": self._eval_command_variation[completed_ids].clone(),
+                    "command_variation_rate_mps2": self._eval_command_variation[completed_ids].clone()
+                    / duration_s.clamp(min=self.step_dt),
+                    "min_clearance_m": self._eval_min_clearance[completed_ids].clone(),
+                    "mean_residual_mps": self._residual_magnitude_sum[completed_ids].clone()
+                    / duration_s.clamp(min=self.step_dt),
+                }
+                self._completed_episode_batches.append(
+                    {key: value.detach().cpu() for key, value in batch.items()}
+                )
+
         extras = dict()
         for key in self._episode_sums.keys():
             episodic_sum_avg = torch.mean(self._episode_sums[key][env_ids])
@@ -330,7 +417,7 @@ class WarehouseAvoidanceEnv(DirectRLEnv):
 
         self._robot.reset(env_ids)
         super()._reset_idx(env_ids)
-        if len(env_ids) == self.num_envs:
+        if len(env_ids) == self.num_envs and self.cfg.randomize_initial_episode_length:
             # Spread out resets to avoid training spikes when many envs reset together.
             self.episode_length_buf = torch.randint_like(self.episode_length_buf, high=int(self.max_episode_length))
 
@@ -338,8 +425,41 @@ class WarehouseAvoidanceEnv(DirectRLEnv):
         self._goal_reached[env_ids] = False
         self._collided[env_ids] = False
         self._out_of_bounds[env_ids] = False
+        self._eval_path_length[env_ids] = 0.0
+        self._eval_command_variation[env_ids] = 0.0
+        self._eval_min_clearance[env_ids] = torch.inf
+        self._eval_prev_command_xy[env_ids] = 0.0
 
-        default_root_state = self._robot.data.default_root_state[env_ids]
+        default_root_state = self._robot.data.default_root_state[env_ids].clone()
+        jitter = torch.tensor(self.cfg.spawn_jitter_xy_m, device=self.device)
+        if torch.any(jitter > 0.0):
+            default_root_state[:, :2] += (
+                2.0
+                * torch.rand(
+                    (len(env_ids), 2), device=self.device, generator=self._robustness_rng
+                )
+                - 1.0
+            ) * jitter
+
+        gain_min, gain_max = self.cfg.actuator_gain_range
+        self._actuator_gain[env_ids] = gain_min + (gain_max - gain_min) * torch.rand(
+            (len(env_ids), 1), device=self.device, generator=self._robustness_rng
+        )
+        if self.cfg.wind_velocity_max_mps > 0.0:
+            wind_angle = 2.0 * math.pi * torch.rand(
+                (len(env_ids),), device=self.device, generator=self._robustness_rng
+            )
+            wind_magnitude = self.cfg.wind_velocity_max_mps * torch.rand(
+                (len(env_ids),), device=self.device, generator=self._robustness_rng
+            )
+            self._wind_velocity_xy[env_ids] = torch.stack(
+                [torch.cos(wind_angle), torch.sin(wind_angle)], dim=-1
+            ) * wind_magnitude.unsqueeze(-1)
+        else:
+            self._wind_velocity_xy[env_ids] = 0.0
+
+        self._eval_start_pos_xy[env_ids] = default_root_state[:, :2]
+        self._eval_prev_pos_xy[env_ids] = default_root_state[:, :2]
         # default_root_state is still env-local here (origin added below), so
         # this distance matches self._goal_xy's own local-frame convention.
         reset_dist_to_goal = torch.linalg.norm(self._goal_xy - default_root_state[:, :2], dim=-1)
@@ -347,6 +467,12 @@ class WarehouseAvoidanceEnv(DirectRLEnv):
         default_root_state[:, :3] += self._terrain.env_origins[env_ids]
         self._robot.write_root_pose_to_sim(default_root_state[:, :7], env_ids)
         self._robot.write_root_velocity_to_sim(default_root_state[:, 7:], env_ids)
+
+    def pop_completed_episode_batches(self) -> list[dict[str, torch.Tensor]]:
+        """Return and clear evaluation records completed since the last call."""
+        batches = self._completed_episode_batches
+        self._completed_episode_batches = []
+        return batches
 
     def _set_debug_vis_impl(self, debug_vis: bool):
         if debug_vis:

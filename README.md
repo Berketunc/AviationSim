@@ -148,86 +148,87 @@ Then, with the sim running: `gz topic -l | grep scan` / `gz topic -e -t /scan/po
 to see the live point cloud (the LiDAR sensor uses lazy publishing, so the
 topic only appears once something subscribes to it).
 
-## Milestone 3 — Research pivot: hybrid imitation + residual RL (Isaac Lab)
+## Milestone 3 — Hybrid imitation + residual RL (Isaac Lab)
 
-**Goal:** reframe the project from a pure classical-control demo into a
-quantitative research comparison: a learned residual RL policy outputs a
-corrective vector on top of the classical A* + trajectory-follower's proposed
-action, evaluated against the classical controller alone on four metrics —
-success rate, trajectory efficiency, compute overhead, and robustness (via
-domain randomization). Landing precision was dropped from the metric set:
-the RL task operates on the 2D navigation plane only (see `oa_rl` below), so
-landing isn't part of what this comparison measures. Planned staging is IL
-pretraining (near-zero-residual warm start) followed by RL fine-tuning,
-rather than RL from scratch.
+**Goal:** compare the classical obstacle-avoidance controller, standalone RL,
+and a learned residual correction on four metrics: success, trajectory
+efficiency, decision overhead, and held-out robustness. The RL task covers 2D
+navigation only; descent and ArUco landing remain the verified classical FSM
+from Milestones 1-2.
 
-**Why not train through PX4 SITL + Gazebo:** real-time-locked lockstep
-simulation plus software-rendered Gazebo made single episodes take 60-190s;
-RL realistically needs thousands to tens of thousands of episodes. Training
-instead runs in NVIDIA Isaac Lab (GPU-parallelized physics), with the trained
-policy later validated back in the full Gazebo/PX4 stack — a sim-to-sim
-transfer check that doubles as a robustness data point.
+Training runs in GPU-parallel Isaac Lab because PX4/Gazebo lockstep episodes
+took 60-190 seconds. `oa_rl` is an external Isaac Lab project registering
+`Isaac-WarehouseAvoidance-Direct-v0`. It uses a velocity-commanded planar drone
+at 1.5 m altitude in the same staggered-pillar geometry. The residual policy
+observes the classical proposal and adds a bounded correction; a precomputed
+Dijkstra goal-flow field is the vectorized analogue of the Gazebo A* plus
+trajectory-follower baseline.
 
-**`oa_rl`:** an Isaac Lab "external project" (own `source/oa_rl` pip package,
-registered as gym env `Isaac-WarehouseAvoidance-Direct-v0`) reproducing
-`warehouse.sdf`'s room/pillar layout with a velocity-commanded drone. Actions
-are 2D (`vx`, `vy`) rather than 3D, with altitude held by a small internal
-proportional controller instead of being learned. This wasn't a compute or
-efficiency call — it was forced by the environment: this warehouse's pillars
-are floor-to-ceiling (4.0m, taller than the 3.5m walls), so there's no
-altitude at which the maze can be flown over, and z-axis motion gives the
-policy zero obstacle-avoidance benefit. The first training run used 3D
-actions and confirmed this empirically rather than just in theory: the
-policy learned nothing useful (action std stuck near its initial value,
-100% of episodes ending in `out_of_bounds`) because the free but useless
-z-axis gave it an easy way to leave the play area without ever engaging with
-the actual 2D navigation problem. Constraining to `action_space=2` removed
-that failure mode. This also reframes what "goal reached" means for this
-RL task: successful 2D navigation to the goal region, not landing — physical
-descent/landing remains the classical FSM's job (Milestones 1-2) and is
-deliberately out of scope for the RL policy, which is also why landing
-precision was dropped from this milestone's metrics (see below). This first
-version proves the training loop runs end to end with a plain reward; IL
-pretraining, the residual-on-classical-controller architecture, and domain
-randomization are
-deliberately not part of it yet.
+The experiment infrastructure is now implemented:
 
-**Run:**
-```bash
-cd oa_rl
-source ~/lab/bin/activate
-python -m pip install -e source/oa_rl   # first time only
+- deterministic classical/standalone/residual evaluation through one harness;
+- JSON and per-episode CSV evidence with success, path, efficiency, command
+  smoothness, clearance, residual magnitude, and compute timing;
+- an identity-residual warm start and PPO resume path;
+- seeded nominal, moderate, and severe robustness profiles;
+- success-conditioned comparison reports, preventing early collisions from
+  appearing artificially path-efficient.
 
-# Sanity check: package registration, scene spawn, reset/step cycle
-timeout 120 python scripts/random_agent.py \
-  --task Isaac-WarehouseAvoidance-Direct-v0 --num_envs 4 --headless
+### Current quantitative result
 
-# Train
-python scripts/rsl_rl/train.py \
-  --task Isaac-WarehouseAvoidance-Direct-v0 --headless --num_envs 64
-```
+Nominal evaluation used 1,024 episodes per controller:
 
-**Status:** a real-scale run from scratch (`num_envs=8192`,
-`max_iterations=5000`) solved obstacle avoidance outright (0% collision, 0%
-out-of-bounds) but exposed a reward-hacking bug: `goal_reached` never fired
-because per-step proximity reward, paid for the whole episode, was more
-profitable than the one-time goal bonus that ends it — so the policy learned
-to loiter just outside the goal radius instead of finishing. Fixed with
-potential-based reward shaping (Ng, Harada & Russell 1999): reward is now
-paid on *progress* toward the goal (a telescoping potential-difference term)
-rather than raw proximity, so loitering nets zero once progress stalls. A
-repeat of the same real-scale run confirms the fix: `goal_reached` jumped
-from 0% to 98.4%, `final_distance_to_goal` moved from 0.3015 (just outside
-the 0.3 goal radius) to 0.2495, and collision/out-of-bounds stayed at 0% —
-obstacle avoidance was preserved, not traded away for goal-reaching.
+| Controller | Success | Time (s) | Path (m) | Efficiency | Variation (m/s²) | Clearance (m) | Latency (ms) |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Classical | 100% | 20.050 | 20.051 | 0.8329 | 8.648 | 0.335 | 0.146 |
+| Standalone RL | 100% | 13.680 | 20.521 | 0.8138 | 9.423 | 0.075 | 0.200 |
+| Penalized residual RL | 100% | 12.000 | 17.281 | 0.9664 | 1.167 | 0.375 | 0.328 |
 
-This validates the environment and training pipeline, but is still a
-standalone policy trained from scratch, not the residual-on-classical
-comparison the milestone is about. Not yet attempted: the residual
-architecture (a classical-controller baseline isn't in this loop at all
-yet), IL pretraining, domain randomization, a classical baseline run through
-the same harness for an apples-to-apples comparison, and sim-to-sim
-validation back in Gazebo/PX4.
+Residual RL retains 100% success while completing 40.1% faster than classical,
+using a 13.8% shorter path, improving efficiency by 16.0%, reducing command
+variation by 86.5%, and increasing minimum clearance by 11.9%. Its combined
+classical lookup plus policy latency is 0.328 ms, below 1% of the 40 ms control
+period.
+
+The moderate held-out profile randomizes spawn, actuator gain, wind, and
+observation noise across 1,024 seeded episodes:
+
+| Controller | Success | Collision | Successful efficiency | Reliability-adjusted efficiency | Clearance (m) |
+|---|---:|---:|---:|---:|---:|
+| Classical | 100% | 0% | 0.8136 | 0.8136 | 0.367 |
+| Standalone RL | 89.7% | 10.3% | 0.8169 | 0.7331 | 0.233 |
+| Residual RL | 100% | 0% | 0.9445 | 0.9445 | 0.410 |
+
+This is the strongest result so far: residual RL preserves classical
+reliability under perturbation and materially improves route quality, while
+standalone RL collides in 10.3% of episodes.
+
+### Imitation warm-start finding
+
+The first near-zero supervised checkpoint exposed closed-loop distribution
+shift: despite open-loop MSE `4.65e-5`, its remaining `0.193 m/s` residual
+caused 100% timeouts. The corrected pretrainer projects the output head to the
+exact zero-residual teacher optimum; its 1,024-episode behavior then matched
+classical exactly while keeping PPO exploration std at 0.10.
+
+A 100-iteration fine-tune used 19,660,800 steps and took 52.67 seconds. The
+warm start kept mean residual to 0.046 m/s at iteration 50 and 0.109 m/s at
+iteration 100, but random initialization achieved better fixed-layout nominal
+performance at the same budgets (0.298 and 0.526 m/s residual respectively).
+The honest conclusion is that identity pretraining controls initial policy
+authority; it is not a nominal sample-efficiency win.
+
+### Current status and next work
+
+Nominal and moderate comparison artifacts are complete under
+`oa_rl/results/evaluations/`. Severe evaluation is implemented but its full
+three-controller matrix has not yet been run. Gazebo/PX4 sim-to-sim transfer
+and any real-hardware work remain unattempted.
+
+For setup, exact checkpoints, evaluator commands, result provenance, and the
+cross-chat handoff, see [`oa_rl/README.md`](oa_rl/README.md). The detailed
+chronological research record remains in
+[`MILESTONE2_STATUS.md`](MILESTONE2_STATUS.md).
 
 ## Optional: real-hardware test (not attempted, not committed to)
 

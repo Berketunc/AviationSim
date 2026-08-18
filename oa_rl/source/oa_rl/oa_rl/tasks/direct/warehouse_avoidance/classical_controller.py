@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import heapq
 import math
+import time
 
 import numpy as np
 import torch
@@ -56,6 +57,7 @@ class GoalFlowField:
         resolution: float = GRID_RESOLUTION,
         inflation: float = INFLATION_RADIUS_M,
     ):
+        build_started = time.perf_counter()
         origin_x, origin_y = grid_origin_xy
         self._origin_x = float(origin_x)
         self._origin_y = float(origin_y)
@@ -85,6 +87,7 @@ class GoalFlowField:
 
         direction = self._steepest_descent_directions(cost, occupied, resolution)
         self._direction = torch.tensor(direction, dtype=torch.float32, device=device)  # (nx, ny, 2)
+        self.build_time_s = time.perf_counter() - build_started
 
     @staticmethod
     def _dijkstra_cost_to_go(occupied: np.ndarray, goal_i: int, goal_j: int, resolution: float) -> np.ndarray:

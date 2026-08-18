@@ -1,42 +1,187 @@
-# oa_rl — Isaac Lab warehouse-avoidance RL task
+# oa_rl — Isaac Lab warehouse-avoidance research environment
 
-Isaac Lab task for the classical-vs-RL obstacle-avoidance research
-described in `../MILESTONE2_STATUS.md`'s research pivot section. Lives
-outside `~/IsaacLab` (kept as a generic, gitignored external engine —
-same pattern as `~/PX4-Autopilot` vs `sim_assets/`, `~/open_vins` vs
-`oa_vio/`), following Isaac Lab's own "external project" convention so it
-registers with Isaac Lab's existing training scripts.
+Isaac Lab external project for AviationSim's quantitative comparison of a
+classical obstacle-avoidance controller, standalone RL, and residual RL. The
+registered task is `Isaac-WarehouseAvoidance-Direct-v0`.
 
-**First version only** (see the `WarehouseAvoidanceEnv` docstring): a bare
-Isaac Lab reproduction of `sim_assets/worlds/warehouse.sdf`'s room/pillar
-layout with a plain RL reward, to prove the training loop runs end to end.
-The residual-on-classical-controller architecture, IL pretraining, domain
-randomization, and the final 5-metric reward shaping are deliberately not
-part of this version.
+The project now includes the residual architecture, a same-harness classical
+baseline, deterministic and perturbed evaluation, compute instrumentation, an
+identity-residual warm start, and nominal/moderate result artifacts.
+
+## Scope and architecture
+
+The task reproduces the warehouse's 20 m × 14 m navigation area and three
+staggered pillar rows. The drone is velocity-commanded in `(vx, vy)` while an
+internal controller holds altitude at 1.5 m. The pillars are floor-to-ceiling,
+so vertical avoidance is neither possible nor learned. Reaching the 2D goal
+region is success; the verified Gazebo/PX4 ArUco landing FSM remains separate.
+
+Three modes share the same scene, termination rules, and metrics:
+
+- **Classical:** a 0.2 m-grid, 0.6 m-inflated Dijkstra goal-flow field, used as
+  the vectorized Isaac analogue of repeated A* plus trajectory following.
+- **Standalone RL:** the pre-residual 20-observation checkpoint directly
+  commands planar velocity.
+- **Residual RL:** the policy receives 22 observations, including the
+  classical proposed velocity, and adds a correction scaled by `0.75 m/s` per
+  axis. The combined command is capped at `1.5 m/s`.
+
+Reward shaping uses progress in a bounded goal potential, not per-step goal
+proximity. This fixed the earlier loitering exploit at 0.3015 m from a 0.3 m
+goal radius.
 
 ## Setup
 
 ```bash
+cd /home/berke/AviationSim/oa_rl
 source ~/lab/bin/activate
 python -m pip install -e source/oa_rl
 ```
 
-## Verify (before any real training run)
+## Main scripts
+
+- `scripts/rsl_rl/train.py` — PPO training.
+- `scripts/evaluate.py` — deterministic classical/standalone/residual
+  evaluation; writes JSON and per-episode CSV.
+- `scripts/pretrain_zero_residual.py` — identity-residual warm start with an
+  exact zero-output projection and PPO exploration std of 0.10.
+- `scripts/compare_evaluations.py` — nominal three-way report.
+- `scripts/compare_robustness.py` — success-conditioned robustness report.
+
+RSL-RL 4.x prints deprecation warnings about `policy`, `distribution_cfg`, and
+`obs_groups`. They are non-fatal: actor and critic resolve to `policy` and all
+checkpoints load correctly. Modernizing the config is maintenance work.
+
+## Nominal results
+
+All rows use 1,024 deterministic episodes and one evaluator. Full report:
+`results/evaluations/nominal_comparison.md`.
+
+| Controller | Success | Time (s) | Path (m) | Efficiency | Command variation (m/s²) | Min clearance (m) | Residual (m/s) | Decision latency (ms) |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| Classical | 100% | 20.050 | 20.051 | 0.8329 | 8.648 | 0.335 | 0.000 | 0.146 |
+| Standalone RL | 100% | 13.680 | 20.521 | 0.8138 | 9.423 | 0.075 | 0.000 | 0.200 |
+| Penalized residual RL | 100% | 12.000 | 17.281 | 0.9664 | 1.167 | 0.375 | 0.522 | 0.328 |
+
+Against classical, residual RL is 40.1% faster, follows a 13.8% shorter path,
+improves efficiency by 16.0%, reduces command variation by 86.5%, and keeps
+11.9% more minimum clearance. Its measured decision time is 0.328 ms, below
+1% of the 40 ms control period.
+
+## Identity-residual warm start and equal-budget finding
+
+The first supervised checkpoint reached open-loop MSE `4.65e-5`, but retained
+a `0.193 m/s` closed-loop correction. It timed out in all 1,024 episodes and
+finished 14.58 m from the goal. This negative distribution-shift ablation is
+`results/evaluations/2026-08-18_09-38-08_residual.json`.
+
+The corrected pretrainer projects the actor head to the exact global optimum
+for a zero-residual teacher. Deterministic output is zero while PPO exploration
+std remains 0.10. Its 1,024-episode evaluation matched classical exactly:
+`results/evaluations/2026-08-18_10-21-03_residual.json`.
+
+Fine-tuning used 8,192 environments and 100 PPO iterations (19,660,800 steps,
+52.67 s):
+
+| Iteration | Initialization | Success | Time (s) | Efficiency | Residual (m/s) |
+|---:|---|---:|---:|---:|---:|
+| 50 | Identity warm start | 100% | 19.215 | 0.8480 | 0.046 |
+| 50 | Random | 100% | 14.560 | 0.9157 | 0.298 |
+| 100 | Identity warm start | 100% | 17.663 | 0.8674 | 0.109 |
+| 100 | Random | 100% | 12.480 | 0.9543 | 0.526 |
+
+The warm start is a safety/authority-control initialization, not a nominal
+sample-efficiency win. Random initialization learns faster on the fixed
+warehouse but uses substantially more residual authority.
+
+## Held-out robustness evaluation
+
+`evaluate.py --robustness_profile` supports:
+
+- `nominal`: fixed spawn, unit actuator gain, no wind/noise.
+- `moderate`: spawn jitter `(±0.25, ±0.75) m`, actuator gain `0.85–1.15`,
+  wind up to `0.10 m/s`, observation-noise std `0.02`.
+- `severe`: spawn jitter `(±0.50, ±1.25) m`, actuator gain `0.70–1.30`,
+  wind up to `0.20 m/s`, observation-noise std `0.05`.
+
+A dedicated seeded generator makes first-episode conditions reproducible.
+Moderate results are complete; trajectory metrics are conditioned on
+successful episodes so an early collision cannot look artificially efficient.
+
+| Controller | Success | Collision | Successful time (s) | Successful efficiency | Reliability-adjusted efficiency | Clearance (m) |
+|---|---:|---:|---:|---:|---:|---:|
+| Classical | 100% | 0% | 20.531 | 0.8136 | 0.8136 | 0.367 |
+| Standalone RL | 89.7% | 10.3% | 13.629 | 0.8169 | 0.7331 | 0.233 |
+| Residual RL | 100% | 0% | 12.616 | 0.9445 | 0.9445 | 0.410 |
+
+Full reports: `results/evaluations/nominal_comparison.md` and
+`results/evaluations/moderate_robustness_comparison.md`.
+
+## Checkpoints and evidence
+
+- Standalone final:
+  `logs/rsl_rl/warehouse_avoidance_direct/2026-07-22_17-17-19/model_4999.pt`
+- Penalized residual final:
+  `logs/rsl_rl/warehouse_avoidance_direct/2026-07-23_13-05-22_residual-penalized/model_4999.pt`
+- Corrected identity warm start:
+  `logs/rsl_rl/warehouse_avoidance_direct/2026-08-18_10-19-25_zero-residual-il/model_il.pt`
+- Identity-warm-start PPO:
+  `logs/rsl_rl/warehouse_avoidance_direct/2026-08-18_10-22-35_il-residual-100/`
+- Nominal source JSONs: `2026-08-18_09-06-27_classical.json`,
+  `2026-08-18_08-43-10_standalone.json`, and
+  `2026-08-18_08-44-40_residual.json` under `results/evaluations/`.
+- Moderate source JSONs: `2026-08-18_11-28-22_classical_moderate.json`,
+  `2026-08-18_11-29-21_standalone_moderate.json`, and
+  `2026-08-18_11-30-32_residual_moderate.json`.
+
+## Next steps / cross-chat handoff
+
+Run from `/home/berke/AviationSim/oa_rl` with `source ~/lab/bin/activate`.
+The immediate severe matrix commands are:
 
 ```bash
-source ~/lab/bin/activate
-timeout 120 python scripts/random_agent.py \
-  --task Isaac-WarehouseAvoidance-Direct-v0 --num_envs 4 --headless
+python scripts/evaluate.py \
+  --task Isaac-WarehouseAvoidance-Direct-v0 \
+  --mode classical --robustness_profile severe \
+  --headless --num_envs 1024 --episodes 1024 --benchmark_iterations 500
 ```
-
-Confirms package registration, scene spawn (floor + walls + 14 pillars ×
-N envs + drone), and reset/step cycles all work before committing to a
-real training run.
-
-## Train
 
 ```bash
-source ~/lab/bin/activate
-python scripts/rsl_rl/train.py \
-  --task Isaac-WarehouseAvoidance-Direct-v0 --headless --num_envs 64
+python scripts/evaluate.py \
+  --task Isaac-WarehouseAvoidance-Direct-v0 \
+  --mode standalone \
+  --checkpoint logs/rsl_rl/warehouse_avoidance_direct/2026-07-22_17-17-19/model_4999.pt \
+  --robustness_profile severe \
+  --headless --num_envs 1024 --episodes 1024 --benchmark_iterations 500
 ```
+
+```bash
+python scripts/evaluate.py \
+  --task Isaac-WarehouseAvoidance-Direct-v0 \
+  --mode residual \
+  --checkpoint logs/rsl_rl/warehouse_avoidance_direct/2026-07-23_13-05-22_residual-penalized/model_4999.pt \
+  --robustness_profile severe \
+  --headless --num_envs 1024 --episodes 1024 --benchmark_iterations 500
+```
+
+Then generate the report using the three newly saved JSON paths:
+
+```bash
+python scripts/compare_robustness.py \
+  --classical results/evaluations/<classical_severe.json> \
+  --standalone results/evaluations/<standalone_severe.json> \
+  --residual results/evaluations/<residual_severe.json> \
+  --output_prefix results/evaluations/severe_robustness_comparison
+```
+
+1. Run the severe matrix and generate `severe_robustness_comparison.md` with
+   the commands above.
+2. Optionally evaluate identity-warm-start `model_50.pt`/`model_99.pt` and
+   random `model_50.pt`/`model_100.pt` under perturbations to test whether
+   smaller early residual authority improves robustness.
+3. Select/export the final residual checkpoint and integrate it as a bounded
+   correction around the Gazebo/PX4 classical follower for sim-to-sim transfer.
+4. Run Gazebo/PX4 classical-versus-residual trials with collision, completion
+   time, path length, and control-loop latency logging.
+5. Modernize the RSL-RL 4.x config warnings, then finalize plots/tables and the
+   report. Do not claim real-hardware validation; none was attempted.

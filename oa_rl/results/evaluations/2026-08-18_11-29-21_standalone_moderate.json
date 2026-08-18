@@ -1,0 +1,116 @@
+{
+  "mode": "standalone",
+  "task": "Isaac-WarehouseAvoidance-Direct-v0",
+  "checkpoint": "/home/berke/AviationSim/oa_rl/logs/rsl_rl/warehouse_avoidance_direct/2026-07-22_17-17-19/model_4999.pt",
+  "checkpoint_sha256": "d3c20e9dcc5d798d18c1ed50cdbb16d2c8bb8cd08e7f213a19d9c59d9fdf3d1e",
+  "git_commit": "f6f24241733e98736f7f1cc1cb8ff88dca4afd7f",
+  "seed": 42,
+  "robustness_profile": "moderate",
+  "robustness_parameters": {
+    "spawn_jitter_xy_m": [
+      0.25,
+      0.75
+    ],
+    "actuator_gain_range": [
+      0.85,
+      1.15
+    ],
+    "wind_velocity_max_mps": 0.1,
+    "observation_noise_std": 0.02
+  },
+  "num_envs": 1024,
+  "episodes": 1024,
+  "step_dt_s": 0.04,
+  "wall_time_s": 4.527758152002207,
+  "control_steps": 397,
+  "simulated_env_steps": 406528,
+  "simulated_env_steps_per_second": 89785.714331988,
+  "compute": {
+    "flow_field_build_ms": 0.0,
+    "classical_lookup_batch1": null,
+    "policy_inference_batch1": {
+      "mean_ms": 0.20250963214039802,
+      "p50_ms": 0.20083199441432953,
+      "p95_ms": 0.21247999370098114,
+      "iterations": 500
+    }
+  },
+  "summary": {
+    "success_rate": 0.8974609375,
+    "collision_rate": 0.1025390625,
+    "out_of_bounds_rate": 0.0,
+    "time_out_rate": 0.0,
+    "episode_steps": {
+      "mean": 311.1611328125,
+      "std": 91.68399047851562,
+      "p50": 332.0,
+      "p95": 389.0,
+      "min": 43.0,
+      "max": 397.0
+    },
+    "duration_s": {
+      "mean": 12.446444511413574,
+      "std": 3.6673593521118164,
+      "p50": 13.279999732971191,
+      "p95": 15.559999465942383,
+      "min": 1.71999990940094,
+      "max": 15.880000114440918
+    },
+    "final_distance_to_goal_m": {
+      "mean": 1.6762619018554688,
+      "std": 4.157139301300049,
+      "p50": 0.2742660641670227,
+      "p95": 13.973846435546875,
+      "min": 0.23239287734031677,
+      "max": 14.039693832397461
+    },
+    "path_length_m": {
+      "mean": 18.690343856811523,
+      "std": 5.24285364151001,
+      "p50": 20.423255920410156,
+      "p95": 20.834054946899414,
+      "min": 2.921380043029785,
+      "max": 21.183855056762695
+    },
+    "trajectory_efficiency": {
+      "mean": 1.2694233655929565,
+      "std": 1.3402153253555298,
+      "p50": 0.8178691864013672,
+      "p95": 5.272706031799316,
+      "min": 0.7950958609580994,
+      "max": 5.635523319244385
+    },
+    "command_variation_mps": {
+      "mean": 116.76981353759766,
+      "std": 40.076622009277344,
+      "p50": 127.93634033203125,
+      "p95": 150.86143493652344,
+      "min": 2.569467306137085,
+      "max": 165.47434997558594
+    },
+    "command_variation_rate_mps2": {
+      "mean": 8.712723731994629,
+      "std": 2.5651516914367676,
+      "p50": 9.421110153198242,
+      "p95": 10.785196304321289,
+      "min": 1.144018292427063,
+      "max": 11.755056381225586
+    },
+    "min_clearance_m": {
+      "mean": 0.2088749259710312,
+      "std": 0.21629001200199127,
+      "p50": 0.11348408460617065,
+      "p95": 0.6313410997390747,
+      "min": -0.02532091736793518,
+      "max": 0.6928637027740479
+    },
+    "mean_residual_mps": {
+      "mean": 0.0,
+      "std": 0.0,
+      "p50": 0.0,
+      "p95": 0.0,
+      "min": 0.0,
+      "max": 0.0
+    }
+  }
+}
