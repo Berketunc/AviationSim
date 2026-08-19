@@ -132,10 +132,21 @@ class WarehouseAvoidanceEnv(DirectRLEnv):
         self._eval_start_pos_xy = torch.tensor(SPAWN_XY, device=self.device).repeat(self.num_envs, 1)
         self._eval_prev_command_xy = torch.zeros(self.num_envs, 2, device=self.device)
 
-        # Dedicated RNG keeps held-out conditions identical across controller
-        # modes even though policy construction consumes the global RNG.
-        self._robustness_rng = torch.Generator(device=self.device)
-        self._robustness_rng.manual_seed(int(self.cfg.seed) + 10_003)
+        # Starts at -1 because the first _reset_idx() creates episode zero.
+        # The evaluator records this value so it can accept exactly one first
+        # episode per environment and ignore faster environments' later resets.
+        self._episode_index = torch.full(
+            (self.num_envs,), -1, dtype=torch.int64, device=self.device
+        )
+
+        # Separate generators keep reset timing from shifting observation
+        # noise. Initial scenario parameters and per-control-step observation
+        # noise are therefore paired across controller modes even when their
+        # episode completion times differ.
+        self._scenario_rng = torch.Generator(device=self.device)
+        self._scenario_rng.manual_seed(int(self.cfg.seed) + 10_003)
+        self._observation_rng = torch.Generator(device=self.device)
+        self._observation_rng.manual_seed(int(self.cfg.seed) + 20_003)
         self._actuator_gain = torch.ones(self.num_envs, 1, device=self.device)
         self._wind_velocity_xy = torch.zeros(self.num_envs, 2, device=self.device)
 
@@ -270,11 +281,21 @@ class WarehouseAvoidanceEnv(DirectRLEnv):
             classical_vel_xy = self._classical_velocity_xy()
             obs = torch.cat([goal_rel_xy, lin_vel_xy, classical_vel_xy, nearest_rel_flat, clearance], dim=-1)
         if self.cfg.observation_noise_std > 0.0:
-            obs = obs + torch.randn(
-                obs.shape,
+            # Always draw the 22-feature residual layout so every controller
+            # consumes the same RNG count. Standalone drops only the two
+            # classical-command slots; noise on all shared features remains
+            # paired with residual/classical mode.
+            noise_22 = torch.randn(
+                (self.num_envs, 22),
                 device=self.device,
-                generator=self._robustness_rng,
-            ) * self.cfg.observation_noise_std
+                generator=self._observation_rng,
+            )
+            noise = (
+                torch.cat([noise_22[:, :4], noise_22[:, 6:]], dim=-1)
+                if self.cfg.standalone_policy_action
+                else noise_22
+            )
+            obs = obs + noise * self.cfg.observation_noise_std
         return {"policy": obs}
 
     @staticmethod
@@ -377,6 +398,13 @@ class WarehouseAvoidanceEnv(DirectRLEnv):
                 ).clamp(min=0.0)
                 path_length = self._eval_path_length[completed_ids].clone()
                 batch = {
+                    "scenario_id": completed_ids.clone(),
+                    "episode_index": self._episode_index[completed_ids].clone(),
+                    "spawn_x_m": self._eval_start_pos_xy[completed_ids, 0].clone(),
+                    "spawn_y_m": self._eval_start_pos_xy[completed_ids, 1].clone(),
+                    "actuator_gain": self._actuator_gain[completed_ids, 0].clone(),
+                    "wind_x_mps": self._wind_velocity_xy[completed_ids, 0].clone(),
+                    "wind_y_mps": self._wind_velocity_xy[completed_ids, 1].clone(),
                     "goal_reached": self._goal_reached[completed_ids].clone(),
                     "collision": self._collided[completed_ids].clone(),
                     "out_of_bounds": self._out_of_bounds[completed_ids].clone(),
@@ -417,6 +445,7 @@ class WarehouseAvoidanceEnv(DirectRLEnv):
 
         self._robot.reset(env_ids)
         super()._reset_idx(env_ids)
+        self._episode_index[env_ids] += 1
         if len(env_ids) == self.num_envs and self.cfg.randomize_initial_episode_length:
             # Spread out resets to avoid training spikes when many envs reset together.
             self.episode_length_buf = torch.randint_like(self.episode_length_buf, high=int(self.max_episode_length))
@@ -436,21 +465,21 @@ class WarehouseAvoidanceEnv(DirectRLEnv):
             default_root_state[:, :2] += (
                 2.0
                 * torch.rand(
-                    (len(env_ids), 2), device=self.device, generator=self._robustness_rng
+                    (len(env_ids), 2), device=self.device, generator=self._scenario_rng
                 )
                 - 1.0
             ) * jitter
 
         gain_min, gain_max = self.cfg.actuator_gain_range
         self._actuator_gain[env_ids] = gain_min + (gain_max - gain_min) * torch.rand(
-            (len(env_ids), 1), device=self.device, generator=self._robustness_rng
+            (len(env_ids), 1), device=self.device, generator=self._scenario_rng
         )
         if self.cfg.wind_velocity_max_mps > 0.0:
             wind_angle = 2.0 * math.pi * torch.rand(
-                (len(env_ids),), device=self.device, generator=self._robustness_rng
+                (len(env_ids),), device=self.device, generator=self._scenario_rng
             )
             wind_magnitude = self.cfg.wind_velocity_max_mps * torch.rand(
-                (len(env_ids),), device=self.device, generator=self._robustness_rng
+                (len(env_ids),), device=self.device, generator=self._scenario_rng
             )
             self._wind_velocity_xy[env_ids] = torch.stack(
                 [torch.cos(wind_angle), torch.sin(wind_angle)], dim=-1

@@ -18,10 +18,10 @@ def as_bool(value: str) -> bool:
     return value.strip().lower() in {"1", "1.0", "true"}
 
 
-def successful_rows(result_path: Path) -> list[dict[str, str]]:
+def episode_rows(result_path: Path) -> list[dict[str, str]]:
     csv_path = episode_csv_path(result_path)
     with csv_path.open(newline="") as stream:
-        return [row for row in csv.DictReader(stream) if as_bool(row["goal_reached"])]
+        return list(csv.DictReader(stream))
 
 
 def successful_mean(rows: list[dict[str, str]], key: str) -> float:
@@ -40,8 +40,84 @@ def controller_latency_ms(result: dict) -> float:
     return latency
 
 
-def make_row(label: str, result_path: Path, result: dict) -> dict[str, float | str]:
-    completed = successful_rows(result_path)
+def validate_comparability(
+    sources: dict[str, Path], results: dict[str, dict]
+) -> tuple[dict[str, list[dict[str, str]]], bool]:
+    expected_modes = {
+        "Classical": "classical",
+        "Standalone RL": "standalone",
+        "Residual RL": "residual",
+    }
+    for label, expected_mode in expected_modes.items():
+        if results[label].get("mode") != expected_mode:
+            raise ValueError(
+                f"{label} input has mode={results[label].get('mode')!r}, "
+                f"expected {expected_mode!r}"
+            )
+
+    comparable_fields = (
+        "task",
+        "seed",
+        "robustness_profile",
+        "robustness_parameters",
+        "num_envs",
+        "episodes",
+        "evaluation_source_sha256",
+        "software_versions",
+        "sampling_protocol",
+    )
+    reference_label = "Classical"
+    reference = results[reference_label]
+    for label, result in results.items():
+        for field in comparable_fields:
+            if result.get(field) != reference.get(field):
+                raise ValueError(
+                    f"{label} differs from {reference_label} in {field}: "
+                    f"{result.get(field)!r} != {reference.get(field)!r}"
+                )
+
+    rows_by_controller = {
+        label: episode_rows(path) for label, path in sources.items()
+    }
+    for label, rows in rows_by_controller.items():
+        if len(rows) != int(results[label]["episodes"]):
+            raise ValueError(
+                f"{label} CSV has {len(rows)} episodes; "
+                f"JSON declares {results[label]['episodes']}"
+            )
+
+    id_presence = {
+        label: bool(rows) and "scenario_id" in rows[0]
+        for label, rows in rows_by_controller.items()
+    }
+    if len(set(id_presence.values())) != 1:
+        raise ValueError("Only some inputs contain paired scenario IDs")
+    if not next(iter(id_presence.values())):
+        return rows_by_controller, False
+
+    scenario_keys = ("spawn_x_m", "spawn_y_m", "actuator_gain", "wind_x_mps", "wind_y_mps")
+    reference_scenarios = None
+    for label, rows in rows_by_controller.items():
+        scenario_ids = [int(float(row["scenario_id"])) for row in rows]
+        if len(set(scenario_ids)) != len(scenario_ids):
+            raise ValueError(f"{label} contains duplicate scenario IDs")
+        if any(int(float(row["episode_index"])) != 0 for row in rows):
+            raise ValueError(f"{label} contains a non-first episode")
+        scenarios = {
+            int(float(row["scenario_id"])): tuple(float(row[key]) for key in scenario_keys)
+            for row in rows
+        }
+        if reference_scenarios is None:
+            reference_scenarios = scenarios
+        elif scenarios != reference_scenarios:
+            raise ValueError(f"{label} does not use the same paired perturbations")
+    return rows_by_controller, True
+
+
+def make_row(
+    label: str, result: dict, all_episodes: list[dict[str, str]]
+) -> dict[str, float | str]:
+    completed = [row for row in all_episodes if as_bool(row["goal_reached"])]
     success_rate = float(result["summary"]["success_rate"])
     efficiency = successful_mean(completed, "trajectory_efficiency")
     return {
@@ -78,11 +154,12 @@ def main() -> None:
         "Residual RL": Path(args.residual),
     }
     results = {name: json.loads(path.read_text()) for name, path in sources.items()}
+    episodes_by_controller, paired = validate_comparability(sources, results)
     profiles = {result.get("robustness_profile", "nominal") for result in results.values()}
     if len(profiles) != 1:
         raise ValueError(f"Input evaluations use different robustness profiles: {sorted(profiles)}")
     profile = profiles.pop()
-    rows = [make_row(name, sources[name], results[name]) for name in sources]
+    rows = [make_row(name, results[name], episodes_by_controller[name]) for name in sources]
 
     output_prefix = Path(args.output_prefix)
     output_prefix.parent.mkdir(parents=True, exist_ok=True)
@@ -99,6 +176,12 @@ def main() -> None:
         "Trajectory metrics are conditioned on successful episodes. Reliability-adjusted",
         "efficiency is success rate multiplied by successful-trajectory efficiency, so an",
         "early collision cannot appear artificially efficient.",
+        (
+            f"All controllers used the same {len(episodes_by_controller['Classical'])} "
+            "scenario IDs and exactly one first episode per environment."
+            if paired
+            else "Legacy inputs do not contain scenario IDs; pairing could not be verified."
+        ),
         "",
         "| Controller | Success | Collision | Successful time (s) | Successful path (m) | Successful efficiency | Reliability-adjusted efficiency | Command variation (m/s²) | Min clearance (m) | Mean residual (m/s) |",
         "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|",

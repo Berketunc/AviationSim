@@ -50,6 +50,11 @@ if args_cli.mode == "classical" and args_cli.checkpoint:
     parser.error("--checkpoint is not used in classical mode")
 if args_cli.episodes <= 0 or args_cli.num_envs <= 0:
     parser.error("--episodes and --num_envs must be positive")
+if args_cli.episodes != args_cli.num_envs:
+    parser.error(
+        "paired evaluation requires --episodes to equal --num_envs so exactly "
+        "one first episode is collected from every environment"
+    )
 
 app_launcher = AppLauncher(args_cli)
 simulation_app = app_launcher.app
@@ -147,6 +152,62 @@ def checkpoint_digest(path: Path | None) -> str | None:
     return digest.hexdigest()
 
 
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+
+def evaluation_source_digest() -> str:
+    """Hash the evaluator and installed-project source needed for a rollout."""
+    paths = [Path(__file__).resolve()]
+    paths.extend(sorted((PROJECT_ROOT / "source" / "oa_rl").rglob("*.py")))
+    paths.extend(
+        path
+        for path in (
+            PROJECT_ROOT / "source" / "oa_rl" / "pyproject.toml",
+            PROJECT_ROOT / "source" / "oa_rl" / "setup.py",
+        )
+        if path.is_file()
+    )
+    digest = hashlib.sha256()
+    for path in sorted(set(paths)):
+        relative = path.relative_to(PROJECT_ROOT)
+        digest.update(str(relative).encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(path.read_bytes())
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def git_provenance() -> dict[str, object]:
+    """Capture both the base commit and whether that commit fully describes the run."""
+    try:
+        commit = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"],
+            cwd=PROJECT_ROOT,
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+        status_lines = subprocess.check_output(
+            ["git", "status", "--porcelain", "--untracked-files=all"],
+            cwd=PROJECT_ROOT,
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).splitlines()
+    except subprocess.CalledProcessError:
+        return {"commit": None, "dirty": None, "status_porcelain": None}
+    return {
+        "commit": commit,
+        "dirty": bool(status_lines),
+        "status_porcelain": status_lines,
+    }
+
+
+def installed_version(distribution: str) -> str | None:
+    try:
+        return metadata.version(distribution)
+    except metadata.PackageNotFoundError:
+        return None
+
+
 def phase(message: str):
     print(f"[eval] {message}", flush=True)
 
@@ -236,6 +297,7 @@ def main():
 
     phase("controller benchmark complete; starting episode rollouts")
     records: dict[str, list[torch.Tensor]] = {}
+    seen_scenario_ids: set[int] = set()
     completed = 0
     control_steps = 0
     next_progress = max(1, args_cli.episodes // 10)
@@ -256,9 +318,21 @@ def main():
 
         control_steps += 1
         for batch in base_env.pop_completed_episode_batches():
+            first_episode = batch["episode_index"].eq(0)
+            selected = [
+                index
+                for index in torch.nonzero(first_episode, as_tuple=False).flatten().tolist()
+                if int(batch["scenario_id"][index].item()) not in seen_scenario_ids
+            ]
+            if not selected:
+                continue
+            selected_tensor = torch.tensor(selected, dtype=torch.long)
             for key, values in batch.items():
-                records.setdefault(key, []).append(values)
-            completed += len(batch["episode_steps"])
+                records.setdefault(key, []).append(values[selected_tensor])
+            seen_scenario_ids.update(
+                int(value) for value in batch["scenario_id"][selected_tensor].tolist()
+            )
+            completed = len(seen_scenario_ids)
         if completed >= next_progress:
             print(f"[eval] completed {min(completed, args_cli.episodes)}/{args_cli.episodes} episodes")
             next_progress += max(1, args_cli.episodes // 10)
@@ -267,10 +341,13 @@ def main():
     if completed < args_cli.episodes:
         raise RuntimeError(f"Simulation stopped after only {completed} completed episodes")
 
-    tensors = {
-        key: torch.cat(chunks)[: args_cli.episodes]
-        for key, chunks in records.items()
-    }
+    tensors = {key: torch.cat(chunks) for key, chunks in records.items()}
+    scenario_order = torch.argsort(tensors["scenario_id"])
+    tensors = {key: values[scenario_order] for key, values in tensors.items()}
+    expected_scenarios = torch.arange(args_cli.episodes, dtype=tensors["scenario_id"].dtype)
+    if not torch.equal(tensors["scenario_id"], expected_scenarios):
+        raise RuntimeError("Did not collect exactly one first episode for every scenario ID")
+
     summary = {
         "success_rate": tensors["goal_reached"].float().mean().item(),
         "collision_rate": tensors["collision"].float().mean().item(),
@@ -319,24 +396,37 @@ def main():
     json_path = output_dir / f"{stem}.json"
     csv_path = output_dir / f"{stem}_episodes.csv"
 
-    try:
-        git_commit = subprocess.check_output(
-            ["git", "rev-parse", "HEAD"], text=True, stderr=subprocess.DEVNULL
-        ).strip()
-    except subprocess.CalledProcessError:
-        git_commit = None
+    provenance = git_provenance()
 
     result = {
         "mode": args_cli.mode,
         "task": args_cli.task,
         "checkpoint": str(checkpoint) if checkpoint else None,
         "checkpoint_sha256": checkpoint_digest(checkpoint),
-        "git_commit": git_commit,
+        # git_commit is retained for compatibility with the existing result
+        # schema. provenance and evaluation_source_sha256 make dirty runs
+        # independently identifiable instead of attributing them only to HEAD.
+        "git_commit": provenance["commit"],
+        "provenance": provenance,
+        "evaluation_source_sha256": evaluation_source_digest(),
+        "software_versions": {
+            "python": sys.version.split()[0],
+            "torch": torch.__version__,
+            "rsl_rl_lib": RSL_RL_VERSION,
+            "isaaclab": installed_version("isaaclab"),
+            "isaaclab_rl": installed_version("isaaclab-rl"),
+        },
         "seed": args_cli.seed,
         "robustness_profile": args_cli.robustness_profile,
         "robustness_parameters": robustness_cfg,
         "num_envs": args_cli.num_envs,
         "episodes": args_cli.episodes,
+        "sampling_protocol": {
+            "paired_first_episode_per_environment": True,
+            "scenario_id": "environment index",
+            "scenario_rng_seed": args_cli.seed + 10_003,
+            "observation_noise_rng_seed": args_cli.seed + 20_003,
+        },
         "step_dt_s": base_env.step_dt,
         "wall_time_s": wall_time_s,
         "control_steps": control_steps,

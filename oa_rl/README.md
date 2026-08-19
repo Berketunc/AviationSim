@@ -42,7 +42,9 @@ python -m pip install -e source/oa_rl
 
 - `scripts/rsl_rl/train.py` — PPO training.
 - `scripts/evaluate.py` — deterministic classical/standalone/residual
-  evaluation; writes JSON and per-episode CSV.
+  evaluation; writes provenance-rich JSON and per-episode CSV. It requires
+  `--episodes == --num_envs` and records exactly one first episode from each
+  environment, sorted by scenario ID.
 - `scripts/pretrain_zero_residual.py` — identity-residual warm start with an
   exact zero-output projection and PPO exploration std of 0.10.
 - `scripts/compare_evaluations.py` — nominal three-way report.
@@ -104,8 +106,11 @@ warehouse but uses substantially more residual authority.
 - `severe`: spawn jitter `(±0.50, ±1.25) m`, actuator gain `0.70–1.30`,
   wind up to `0.20 m/s`, observation-noise std `0.05`.
 
-A dedicated seeded generator makes first-episode conditions reproducible.
-Moderate results are complete; trajectory metrics are conditioned on
+Separate seeded generators make first-episode scenario parameters and
+observation noise reproducible without controller-dependent reset timing
+shifting either stream. Shared observation features receive the same noise
+even though the standalone policy has 20 inputs and residual/classical mode
+has 22. Moderate results are complete; trajectory metrics are conditioned on
 successful episodes so an early collision cannot look artificially efficient.
 
 | Controller | Success | Collision | Successful time (s) | Successful efficiency | Reliability-adjusted efficiency | Clearance (m) |
