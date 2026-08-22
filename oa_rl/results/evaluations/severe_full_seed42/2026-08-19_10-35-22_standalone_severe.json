@@ -1,0 +1,205 @@
+{
+  "mode": "standalone",
+  "task": "Isaac-WarehouseAvoidance-Direct-v0",
+  "checkpoint": "/home/berke/AviationSim/oa_rl/logs/rsl_rl/warehouse_avoidance_direct/2026-07-22_17-17-19/model_4999.pt",
+  "checkpoint_sha256": "d3c20e9dcc5d798d18c1ed50cdbb16d2c8bb8cd08e7f213a19d9c59d9fdf3d1e",
+  "git_commit": "09727538b2651bdaf1e4cb6c8f26516952faca41",
+  "provenance": {
+    "commit": "09727538b2651bdaf1e4cb6c8f26516952faca41",
+    "dirty": true,
+    "status_porcelain": [
+      "?? oa_rl/results/evaluations/severe_full_seed42/2026-08-19_10-33-59_classical_severe.json",
+      "?? oa_rl/results/evaluations/severe_full_seed42/2026-08-19_10-33-59_classical_severe_episodes.csv"
+    ]
+  },
+  "evaluation_source_sha256": "51afe4e9c3bfc7ecc665b2ac9064176563eeb7ef03303ff23bb7ecea459060c6",
+  "software_versions": {
+    "python": "3.11.15",
+    "torch": "2.7.0+cu128",
+    "rsl_rl_lib": "5.0.1",
+    "isaaclab": "0.54.4",
+    "isaaclab_rl": "0.5.2"
+  },
+  "seed": 42,
+  "robustness_profile": "severe",
+  "robustness_parameters": {
+    "spawn_jitter_xy_m": [
+      0.5,
+      1.25
+    ],
+    "actuator_gain_range": [
+      0.7,
+      1.3
+    ],
+    "wind_velocity_max_mps": 0.2,
+    "observation_noise_std": 0.05
+  },
+  "num_envs": 1024,
+  "episodes": 1024,
+  "sampling_protocol": {
+    "paired_first_episode_per_environment": true,
+    "scenario_id": "environment index",
+    "scenario_rng_seed": 10045,
+    "observation_noise_rng_seed": 20045
+  },
+  "step_dt_s": 0.04,
+  "wall_time_s": 14.91446276900001,
+  "control_steps": 1124,
+  "simulated_env_steps": 1150976,
+  "simulated_env_steps_per_second": 77171.80416262295,
+  "compute": {
+    "flow_field_build_ms": 0.0,
+    "classical_lookup_batch1": null,
+    "policy_inference_batch1": {
+      "mean_ms": 0.20975852824747562,
+      "p50_ms": 0.20643199980258942,
+      "p95_ms": 0.2197439968585968,
+      "iterations": 500
+    }
+  },
+  "summary": {
+    "success_rate": 0.814453125,
+    "collision_rate": 0.18359375,
+    "out_of_bounds_rate": 0.0,
+    "time_out_rate": 0.001953125,
+    "episode_steps": {
+      "mean": 308.7412109375,
+      "std": 136.02540588378906,
+      "p50": 324.0,
+      "p95": 486.0,
+      "min": 33.0,
+      "max": 1124.0
+    },
+    "duration_s": {
+      "mean": 12.349648475646973,
+      "std": 5.44101619720459,
+      "p50": 12.960000038146973,
+      "p95": 19.439998626708984,
+      "min": 1.3199999332427979,
+      "max": 44.959999084472656
+    },
+    "final_distance_to_goal_m": {
+      "mean": 2.6237235069274902,
+      "std": 5.0926899909973145,
+      "p50": 0.28092271089553833,
+      "p95": 14.00693416595459,
+      "min": 0.22757446765899658,
+      "max": 14.050102233886719
+    },
+    "path_length_m": {
+      "mean": 17.563566207885742,
+      "std": 6.613582134246826,
+      "p50": 20.301044464111328,
+      "p95": 21.197708129882812,
+      "min": 2.600135087966919,
+      "max": 57.0279655456543
+    },
+    "trajectory_efficiency": {
+      "mean": 1.5549230575561523,
+      "std": 1.652262568473816,
+      "p50": 0.8229175209999084,
+      "p95": 5.5216217041015625,
+      "min": 0.28539803624153137,
+      "max": 6.2414445877075195
+    },
+    "command_variation_mps": {
+      "mean": 118.68389129638672,
+      "std": 104.72061157226562,
+      "p50": 129.02325439453125,
+      "p95": 185.3307647705078,
+      "min": 2.8684186935424805,
+      "max": 2213.638916015625
+    },
+    "command_variation_rate_mps2": {
+      "mean": 8.432985305786133,
+      "std": 3.638925313949585,
+      "p50": 9.487417221069336,
+      "p95": 11.58435344696045,
+      "min": 1.182596206665039,
+      "max": 49.235740661621094
+    },
+    "min_clearance_m": {
+      "mean": 0.2628357410430908,
+      "std": 0.2602115571498871,
+      "p50": 0.16153746843338013,
+      "p95": 0.6631864309310913,
+      "min": -0.06858518719673157,
+      "max": 0.7117373943328857
+    },
+    "mean_residual_mps": {
+      "mean": 0.0,
+      "std": 0.0,
+      "p50": 0.0,
+      "p95": 0.0,
+      "min": 0.0,
+      "max": 0.0
+    },
+    "successful_episode_count": 834,
+    "successful_only": {
+      "duration_s": {
+        "mean": 14.362588882446289,
+        "std": 2.881695508956909,
+        "p50": 13.920000076293945,
+        "p95": 19.68000030517578,
+        "min": 9.59999942779541,
+        "max": 23.0
+      },
+      "final_distance_to_goal_m": {
+        "mean": 0.27308499813079834,
+        "std": 0.017191343009471893,
+        "p50": 0.27561789751052856,
+        "p95": 0.2966674268245697,
+        "min": 0.22757446765899658,
+        "max": 0.2999737560749054
+      },
+      "path_length_m": {
+        "mean": 20.453044891357422,
+        "std": 0.44578415155410767,
+        "p50": 20.44061851501465,
+        "p95": 21.216381072998047,
+        "min": 19.354568481445312,
+        "max": 21.813220977783203
+      },
+      "trajectory_efficiency": {
+        "mean": 0.8183455467224121,
+        "std": 0.013455490581691265,
+        "p50": 0.8188480138778687,
+        "p95": 0.8391396403312683,
+        "min": 0.7773692607879639,
+        "max": 0.8632749319076538
+      },
+      "command_variation_mps": {
+        "mean": 139.03977966308594,
+        "std": 26.47183609008789,
+        "p50": 134.70562744140625,
+        "p95": 187.85833740234375,
+        "min": 77.3620834350586,
+        "max": 241.70144653320312
+      },
+      "command_variation_rate_mps2": {
+        "mean": 9.781603813171387,
+        "std": 1.2260385751724243,
+        "p50": 9.863157272338867,
+        "p95": 11.641505241394043,
+        "min": 5.276225566864014,
+        "max": 12.724638938903809
+      },
+      "min_clearance_m": {
+        "mean": 0.32521164417266846,
+        "std": 0.24879677593708038,
+        "p50": 0.2881278097629547,
+        "p95": 0.6684842109680176,
+        "min": 0.00023660063743591309,
+        "max": 0.7117373943328857
+      },
+      "mean_residual_mps": {
+        "mean": 0.0,
+        "std": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      }
+    }
+  }
+}

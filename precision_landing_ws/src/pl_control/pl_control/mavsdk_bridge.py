@@ -99,6 +99,9 @@ class MavsdkBridge:
         except Exception:
             pass
         await self._drone.action.land()
+        async for in_air in self._drone.telemetry.in_air():
+            if not in_air:
+                return
 
     # ── hot path ──────────────────────────────────────────────────────────────
 

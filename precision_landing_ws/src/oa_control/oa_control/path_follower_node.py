@@ -8,10 +8,11 @@ velocity setpoints toward the current one via the same MavsdkBridge
 pl_control uses for the precision landing controller — no ArUco/landing-
 specific logic in that bridge, so it's reused as-is rather than duplicated.
 
-Every new Path always starts at (a cell very close to) the current position,
-because oa_planning_node always plans from wherever the vehicle currently is
-— so a new path is always resumed from waypoint 0, never by searching for
-whichever waypoint happens to be spatially nearest. That search used to be
+Every new Path starts with the voxel containing the current position,
+because oa_planning_node always plans from wherever the vehicle currently is.
+The follower skips exactly that first voxel-center waypoint and resumes from
+waypoint 1, never by searching for whichever waypoint happens to be spatially
+nearest. That search used to be
 here and was a real bug: the "nearest" waypoint by raw distance can be one
 further along the path, on the far side of an obstacle the path was
 deliberately routed around, which then had this controller cut straight
@@ -30,14 +31,26 @@ import math
 import threading
 import time
 from enum import Enum, auto
+from pathlib import Path as FilesystemPath
 
 import rclpy
+from ament_index_python.packages import get_package_share_directory
 from rclpy.node import Node
 from geometry_msgs.msg import PoseStamped
 from nav_msgs.msg import Odometry, Path
 from std_msgs.msg import Bool
 
+from oa_control.residual_policy import (
+    ResidualPolicy,
+    ResidualPolicyError,
+    build_observation,
+)
 from pl_control.landing_controller_node import PIController
+from oa_control.trial_recorder import (
+    NavigationTrialRecorder,
+    obstacle_surface_clearance,
+    shield_residual_velocity,
+)
 from pl_control.mavsdk_bridge import MavsdkBridge
 
 
@@ -82,6 +95,156 @@ class PathFollowerNode(Node):
         self.hold_kp: float = self.get_parameter('hold_position_kp').value
         self.hold_max_speed: float = self.get_parameter('hold_position_max_speed_ms').value
 
+        # ── optional residual correction (disabled = original controller) ─────
+        self.declare_parameter('residual_enabled', False)
+        self.declare_parameter('residual_policy_path', '')
+        self.declare_parameter('residual_training_classical_speed_ms', 1.0)
+        self.declare_parameter('residual_training_scale_ms', 0.75)
+        self.declare_parameter('residual_training_speed_cap_ms', 1.5)
+        self.declare_parameter('residual_deployment_authority', 0.5)
+        self.declare_parameter('residual_velocity_filter_alpha', 0.35)
+        self.declare_parameter('residual_status_log_period_s', 10.0)
+        self.declare_parameter('residual_planner_clearance_m', 0.65)
+        self.declare_parameter('residual_clearance_lookahead_s', 1.0)
+        self.declare_parameter('residual_clearance_release_margin_m', 0.35)
+        self.declare_parameter('residual_goal_handoff_radius_m', 1.5)
+        self.declare_parameter('residual_recovery_clearance_m', 1.0)
+
+        residual_requested = bool(self.get_parameter('residual_enabled').value)
+        self.residual_enabled = False
+        self.residual_policy: ResidualPolicy | None = None
+        self.residual_training_classical_speed = float(
+            self.get_parameter('residual_training_classical_speed_ms').value)
+        self.residual_training_scale = float(
+            self.get_parameter('residual_training_scale_ms').value)
+        self.residual_training_speed_cap = float(
+            self.get_parameter('residual_training_speed_cap_ms').value)
+        self.residual_deployment_authority = float(
+            self.get_parameter('residual_deployment_authority').value)
+        self.residual_velocity_filter_alpha = float(
+            self.get_parameter('residual_velocity_filter_alpha').value)
+        self.residual_status_log_period_s = float(
+            self.get_parameter('residual_status_log_period_s').value)
+        self.residual_planner_clearance = float(
+            self.get_parameter('residual_planner_clearance_m').value)
+        self.residual_clearance_lookahead = float(
+            self.get_parameter('residual_clearance_lookahead_s').value)
+        self.residual_clearance_release_margin = float(
+            self.get_parameter('residual_clearance_release_margin_m').value)
+        self.residual_goal_handoff_radius = float(
+            self.get_parameter('residual_goal_handoff_radius_m').value)
+        self.residual_recovery_clearance = float(
+            self.get_parameter('residual_recovery_clearance_m').value)
+        self.residual_velocity_scale = 1.0
+        self.residual_scale = 0.0
+        self.residual_speed_cap = self.cruise_speed
+
+        if residual_requested:
+            try:
+                if self.cruise_speed <= 0.0:
+                    raise ResidualPolicyError('cruise_speed_ms must be positive')
+                if self.residual_training_classical_speed <= 0.0:
+                    raise ResidualPolicyError(
+                        'residual_training_classical_speed_ms must be positive')
+                if self.residual_training_scale < 0.0:
+                    raise ResidualPolicyError(
+                        'residual_training_scale_ms must be non-negative')
+                if self.residual_training_speed_cap <= 0.0:
+                    raise ResidualPolicyError(
+                        'residual_training_speed_cap_ms must be positive')
+                if not 0.0 < self.residual_deployment_authority <= 1.0:
+                    raise ResidualPolicyError(
+                        'residual_deployment_authority must be in (0, 1]')
+                if not 0.0 < self.residual_velocity_filter_alpha <= 1.0:
+                    raise ResidualPolicyError(
+                        'residual_velocity_filter_alpha must be in (0, 1]')
+                if self.residual_planner_clearance <= 0.0:
+                    raise ResidualPolicyError(
+                        'residual_planner_clearance_m must be positive')
+                if self.residual_clearance_lookahead <= 0.0:
+                    raise ResidualPolicyError(
+                        'residual_clearance_lookahead_s must be positive')
+                if self.residual_clearance_release_margin <= 0.0:
+                    raise ResidualPolicyError(
+                        'residual_clearance_release_margin_m must be positive')
+                if self.residual_goal_handoff_radius <= self.goal_radius:
+                    raise ResidualPolicyError(
+                        'residual_goal_handoff_radius_m must exceed '
+                        'goal_reached_radius_m')
+                if (
+                    self.residual_recovery_clearance
+                    <= self.residual_planner_clearance
+                ):
+                    raise ResidualPolicyError(
+                        'residual_recovery_clearance_m must exceed '
+                        'residual_planner_clearance_m')
+
+                configured_path = str(
+                    self.get_parameter('residual_policy_path').value).strip()
+                policy_path = (
+                    FilesystemPath(configured_path).expanduser()
+                    if configured_path
+                    else FilesystemPath(get_package_share_directory('oa_control'))
+                    / 'models'
+                    / 'residual_actor_weights.npz'
+                )
+                self.residual_policy = ResidualPolicy(policy_path)
+                self.residual_velocity_scale = (
+                    self.cruise_speed / self.residual_training_classical_speed)
+                self.residual_scale = (
+                    self.residual_training_scale
+                    * self.residual_velocity_scale
+                    * self.residual_deployment_authority
+                )
+                self.residual_speed_cap = (
+                    self.residual_training_speed_cap * self.residual_velocity_scale)
+                self.residual_enabled = True
+                self.get_logger().info(
+                    'Residual correction enabled: '
+                    f'policy={self.residual_policy.weights_path}, '
+                    f'authority={self.residual_deployment_authority:.2f}, '
+                    f'residual_scale={self.residual_scale:.3f}m/s, '
+                    f'combined_cap={self.residual_speed_cap:.3f}m/s, '
+                    f'clearance_guard={self.residual_planner_clearance:.3f}m, '
+                    f'lookahead={self.residual_clearance_lookahead:.2f}s, '
+                    f'goal_handoff={self.residual_goal_handoff_radius:.2f}m')
+            except Exception as exc:
+                self.residual_policy = None
+                self.get_logger().error(
+                    f'Residual initialization failed ({exc}); '
+                    'continuing with the unchanged classical follower.')
+
+        # ── optional paired-transfer trial recorder ─────────────────────────
+        self.declare_parameter('trial_metrics_enabled', False)
+        self.declare_parameter('trial_label', '')
+        self.declare_parameter('trial_output_path', '')
+        self.declare_parameter('trial_timeout_s', 90.0)
+        self.declare_parameter('trial_collision_radius_m', 0.35)
+        self.trial_recorder: NavigationTrialRecorder | None = None
+
+        if bool(self.get_parameter('trial_metrics_enabled').value):
+            try:
+                output_path = str(
+                    self.get_parameter('trial_output_path').value).strip()
+                self.trial_recorder = NavigationTrialRecorder(
+                    controller='residual' if self.residual_enabled else 'classical',
+                    label=str(self.get_parameter('trial_label').value),
+                    output_path=output_path or None,
+                    timeout_s=float(self.get_parameter('trial_timeout_s').value),
+                    collision_radius_m=float(
+                        self.get_parameter('trial_collision_radius_m').value),
+                )
+                self.get_logger().info(
+                    'Navigation trial metrics enabled: '
+                    f'controller={self.trial_recorder.controller}, '
+                    f'label={self.trial_recorder.label!r}, '
+                    f'output={self.trial_recorder.output_path}')
+            except (TypeError, ValueError) as exc:
+                self.trial_recorder = None
+                self.get_logger().error(
+                    f'Trial recorder initialization failed ({exc}); '
+                    'flight control will continue without trial metrics.')
+
         # ── marker-landing parameters (see module docstring) ────────────────────
         self.declare_parameter('marker_pose_topic', '/oa/landing/target_pose')
         self.declare_parameter('marker_visible_topic', '/oa/landing/is_visible')
@@ -119,15 +282,28 @@ class PathFollowerNode(Node):
         self.path: Path | None = None
         self.waypoint_idx = 0
         self.current_pos = None   # (x, y, z)
+        self.current_velocity_world = None  # filtered finite-difference (vx, vy)
+        self._last_odom_xy = None
+        self._last_odom_time_s = None
         self.current_yaw = 0.0
         self.hold_pos = None      # anchor point while holding (see _hold_position)
         self.last_tick_time = time.monotonic()
+        self._residual_inference_count = 0
+        self._residual_inference_total_ns = 0
+        self._residual_magnitude_sum = 0.0
+        self._residual_shield_blend_sum = 0.0
+        self._residual_shield_intervention_count = 0
+        self._residual_recovery_count = 0
+        self._residual_last_safe_position = None
+        self._residual_last_status_time = time.monotonic()
 
         self.marker_pose: PoseStamped | None = None
         self.marker_visible = False
         self.marker_state_entry_time = time.monotonic()
         self.marker_last_seen_time = time.monotonic()
         self.marker_aligned_count = 0
+        self.marker_search_timed_out = False
+        self._marker_last_status_time = 0.0
 
         # ── bridge & subscriptions ────────────────────────────────────────────
         self.bridge = MavsdkBridge(system_address=mavsdk_addr)
@@ -151,16 +327,82 @@ class PathFollowerNode(Node):
     # ── ROS callbacks ─────────────────────────────────────────────────────────
 
     def _path_cb(self, msg: Path):
+        previous_path_available = bool(self.path and self.path.poses)
         self.path = msg
-        # Every new path starts at (a cell very close to) the current
-        # position — see the module docstring for why this is index 0, not
-        # a "nearest waypoint" search.
-        self.waypoint_idx = 0
+        if self.trial_recorder is not None:
+            self.trial_recorder.record_path_update(bool(msg.poses))
+            if msg.poses:
+                goal = msg.poses[-1].pose.position
+                self.trial_recorder.set_goal((goal.x, goal.y))
+        if (
+            self.residual_enabled
+            and previous_path_available
+            and not msg.poses
+            and self._residual_last_safe_position is not None
+        ):
+            self.hold_pos = self._residual_last_safe_position
+            self._residual_recovery_count += 1
+            if self.trial_recorder is not None:
+                self.trial_recorder.record_residual_recovery()
+            self.get_logger().warn(
+                'Residual recovery activated after an empty replan: '
+                f'returning to safe anchor {self.hold_pos}.')
+        # A* includes the current start voxel as path[0]. Steering back to
+        # that voxel's center after every replan caused measurable waypoint
+        # churn. Skip exactly that known start element; do not reintroduce a
+        # nearest-waypoint search that can jump across an obstacle.
+        self.waypoint_idx = 1 if len(msg.poses) > 1 else 0
 
     def _odom_cb(self, msg: Odometry):
         p = msg.pose.pose.position
-        self.current_pos = (p.x, p.y, p.z)
+        position = (float(p.x), float(p.y), float(p.z))
+        stamp = msg.header.stamp
+        stamp_s = float(stamp.sec) + float(stamp.nanosec) * 1.0e-9
+        if stamp_s <= 0.0:
+            stamp_s = self.get_clock().now().nanoseconds * 1.0e-9
+
+        if self._last_odom_xy is not None and self._last_odom_time_s is not None:
+            dt = stamp_s - self._last_odom_time_s
+            if 1.0e-4 < dt <= 1.0:
+                raw_velocity = (
+                    (position[0] - self._last_odom_xy[0]) / dt,
+                    (position[1] - self._last_odom_xy[1]) / dt,
+                )
+                if math.hypot(*raw_velocity) <= 10.0:
+                    if self.current_velocity_world is None:
+                        self.current_velocity_world = raw_velocity
+                    else:
+                        alpha = self.residual_velocity_filter_alpha
+                        self.current_velocity_world = (
+                            alpha * raw_velocity[0]
+                            + (1.0 - alpha) * self.current_velocity_world[0],
+                            alpha * raw_velocity[1]
+                            + (1.0 - alpha) * self.current_velocity_world[1],
+                        )
+
+        self._last_odom_xy = position[:2]
+        self._last_odom_time_s = stamp_s
+        self.current_pos = position
         self.current_yaw = _yaw_from_quaternion(msg.pose.pose.orientation)
+
+        if (
+            self.residual_enabled
+            and self.state == State.FOLLOW
+            and self.path is not None
+            and self.path.poses
+            and obstacle_surface_clearance(position[:2])
+            >= self.residual_recovery_clearance
+        ):
+            self._residual_last_safe_position = position
+
+        if self.trial_recorder is not None and self.state == State.FOLLOW:
+            try:
+                self.trial_recorder.observe(stamp_s, position[:2])
+            except ValueError as exc:
+                self.get_logger().error(
+                    f'Trial recorder rejected odometry ({exc}); '
+                    'disabling metrics without changing flight control.')
+                self.trial_recorder = None
 
     def _marker_pose_cb(self, msg: PoseStamped):
         self.marker_pose = msg
@@ -198,6 +440,17 @@ class PathFollowerNode(Node):
         self.last_tick_time = now
 
         if self.state == State.FOLLOW:
+            if (
+                self.trial_recorder is not None
+                and self.trial_recorder.started
+                and self._last_odom_time_s is not None
+            ):
+                if self.trial_recorder.collision_detected:
+                    self._stop_failed_navigation_trial('collision')
+                    return
+                if self.trial_recorder.timed_out(self._last_odom_time_s):
+                    self._stop_failed_navigation_trial('time_out')
+                    return
             self._do_follow()
         elif self.state == State.SEARCH_MARKER:
             self._do_marker_search(now)
@@ -211,8 +464,10 @@ class PathFollowerNode(Node):
             self._hold_position()
             return
 
+        decision_started_ns = time.perf_counter_ns()
         target = self._advance_to_current_waypoint()
         if target is None:
+            self._finish_navigation_trial('success')
             self.get_logger().info('Goal reached — searching for landing marker.')
             self._enter_marker_search()
             return
@@ -228,8 +483,109 @@ class PathFollowerNode(Node):
 
         speed = min(self.cruise_speed, dist)
         wx, wy, wz = (dx / dist) * speed, (dy / dist) * speed, (dz / dist) * speed
+        if self.residual_enabled:
+            wx, wy = self._apply_residual_correction(wx, wy)
 
         self._send_world_velocity(wx, wy, wz)
+        if self.trial_recorder is not None:
+            self.trial_recorder.record_controller_latency(time.perf_counter_ns() - decision_started_ns)
+
+    def _apply_residual_correction(
+        self, classical_wx: float, classical_wy: float
+    ) -> tuple[float, float]:
+        """Apply the learned correction or return the classical command."""
+
+        if (
+            self.residual_policy is None
+            or self.current_velocity_world is None
+            or self.current_pos is None
+            or self.path is None
+            or not self.path.poses
+        ):
+            return classical_wx, classical_wy
+
+        goal = self.path.poses[-1].pose.position
+        started_ns = time.perf_counter_ns()
+        try:
+            observation = build_observation(
+                self.current_pos[:2],
+                self.current_velocity_world,
+                (goal.x, goal.y),
+                (classical_wx, classical_wy),
+                velocity_scale=self.residual_velocity_scale,
+            )
+            corrected, residual, _ = self.residual_policy.correct_velocity(
+                observation,
+                (classical_wx, classical_wy),
+                residual_scale_mps=self.residual_scale,
+                combined_speed_cap_mps=self.residual_speed_cap,
+            )
+            goal_distance_xy = math.hypot(
+                goal.x - self.current_pos[0],
+                goal.y - self.current_pos[1],
+            )
+            goal_handoff = (
+                goal_distance_xy <= self.residual_goal_handoff_radius
+            )
+            corrected, residual, shield_blend = shield_residual_velocity(
+                self.current_pos[:2],
+                (classical_wx, classical_wy),
+                residual,
+                speed_cap_mps=self.residual_speed_cap,
+                minimum_clearance_m=self.residual_planner_clearance,
+                lookahead_s=self.residual_clearance_lookahead,
+                clearance_release_margin_m=(
+                    self.residual_clearance_release_margin
+                ),
+                maximum_blend=0.0 if goal_handoff else 1.0,
+            )
+        except Exception as exc:
+            self.residual_enabled = False
+            self.residual_policy = None
+            if self.trial_recorder is not None:
+                self.trial_recorder.mark_residual_fallback()
+            self.get_logger().error(
+                f'Residual inference failed ({exc}); correction is now disabled '
+                'and the unchanged classical follower remains active.')
+            return classical_wx, classical_wy
+
+        elapsed_ns = time.perf_counter_ns() - started_ns
+        self._residual_inference_count += 1
+        self._residual_inference_total_ns += elapsed_ns
+        residual_magnitude = math.hypot(
+            float(residual[0]), float(residual[1]))
+        self._residual_magnitude_sum += residual_magnitude
+        self._residual_shield_blend_sum += shield_blend
+        if shield_blend < 1.0 - 1.0e-6:
+            self._residual_shield_intervention_count += 1
+        if self.trial_recorder is not None:
+            self.trial_recorder.record_residual_inference(
+                elapsed_ns,
+                residual_magnitude,
+                shield_blend,
+                goal_handoff=goal_handoff,
+            )
+
+        now = time.monotonic()
+        if (
+            self.residual_status_log_period_s > 0.0
+            and now - self._residual_last_status_time
+            >= self.residual_status_log_period_s
+        ):
+            count = self._residual_inference_count
+            mean_latency_ms = self._residual_inference_total_ns / count / 1.0e6
+            mean_residual = self._residual_magnitude_sum / count
+            mean_shield_blend = self._residual_shield_blend_sum / count
+            self.get_logger().info(
+                'Residual status: '
+                f'samples={count}, mean_latency={mean_latency_ms:.3f}ms, '
+                f'mean_correction={mean_residual:.3f}m/s, '
+                f'mean_shield_blend={mean_shield_blend:.3f}, '
+                f'shield_interventions={self._residual_shield_intervention_count}, '
+                f'recoveries={self._residual_recovery_count}')
+            self._residual_last_status_time = now
+
+        return float(corrected[0]), float(corrected[1])
 
     # ── marker landing: SEARCH_MARKER -> ALIGN_MARKER -> DESCEND_MARKER ────────
     #
@@ -248,6 +604,7 @@ class PathFollowerNode(Node):
         self.state = State.SEARCH_MARKER
         self.marker_state_entry_time = time.monotonic()
         self.marker_last_seen_time = time.monotonic()
+        self.marker_search_timed_out = False
         self.hold_pos = self.current_pos
 
     def _do_marker_search(self, now: float):
@@ -258,9 +615,18 @@ class PathFollowerNode(Node):
 
         elapsed = now - self.marker_state_entry_time
         if elapsed > self.marker_search_timeout_s:
-            self.get_logger().error(
-                f'Landing marker not found within {self.marker_search_timeout_s}s '
-                'of the goal — holding position rather than landing blind.')
+            if not self.marker_search_timed_out:
+                self.marker_search_timed_out = True
+                self.get_logger().error(
+                    'Landing marker not found within '
+                    f'{self.marker_search_timeout_s}s of the goal — '
+                    'holding position rather than landing blind.')
+                if (
+                    self.trial_recorder is not None
+                    and self.trial_recorder.finished
+                ):
+                    self.trial_recorder.record_landing_outcome(
+                        'marker_not_found')
             self._hold_position()
             return
 
@@ -322,7 +688,9 @@ class PathFollowerNode(Node):
 
         vx = self.marker_pi_x.update(dx, dt)
         vy = self.marker_pi_y.update(dy, dt)
-        self.bridge.send_velocity_body(vx, vy, self._altitude_hold_vz_down(), 0.0)
+        self.bridge.send_velocity_body(
+            vx, vy, self._altitude_hold_vz_down(), 0.0)
+        self._log_marker_status(now, 'ALIGN', dx, dy, error)
 
         if error < self.marker_hacc_radius_m:
             self.marker_aligned_count += 1
@@ -353,12 +721,31 @@ class PathFollowerNode(Node):
             vz = 0.0
 
         self.bridge.send_velocity_body(vx, vy, vz, 0.0)
+        self._log_marker_status(now, 'DESCEND', dx, dy, error, dz)
 
         if dz < self.marker_final_land_alt_m:
             self.get_logger().info(
                 f'Below {self.marker_final_land_alt_m}m — handing off to Action.land().')
             self.state = State.LANDED
             threading.Thread(target=self._land_async, daemon=True).start()
+
+    def _log_marker_status(
+        self,
+        now: float,
+        phase: str,
+        dx: float,
+        dy: float,
+        error: float,
+        dz: float | None = None,
+    ):
+        if now - self._marker_last_status_time < 1.0:
+            return
+        altitude = f', dz={dz:.3f}m' if dz is not None else ''
+        self.get_logger().info(
+            f'Marker {phase}: dx={dx:+.3f}m, dy={dy:+.3f}m, '
+            f'error={error:.3f}m{altitude}, '
+            f'aligned_frames={self.marker_aligned_count}')
+        self._marker_last_status_time = now
 
     def _marker_visible_or_revert(self, now: float) -> bool:
         """Return True if the marker is currently visible; otherwise, once
@@ -368,6 +755,12 @@ class PathFollowerNode(Node):
         if self.marker_visible and self.marker_pose is not None:
             self.marker_last_seen_time = now
             return True
+        # Never leave the last alignment velocity latched while visual
+        # feedback is absent. The MAVSDK loop repeats its most recent command,
+        # so an intermittent detection would otherwise drive the marker out
+        # of frame before the lost-marker timeout expires.
+        self.bridge.send_velocity_body(
+            0.0, 0.0, self._altitude_hold_vz_down(), 0.0)
         lost_for = now - self.marker_last_seen_time
         if lost_for > self.marker_lost_timeout_s:
             self.get_logger().warn(f'Landing marker absent {lost_for:.1f}s — reverting to search.')
@@ -377,8 +770,12 @@ class PathFollowerNode(Node):
     def _land_async(self):
         try:
             self.bridge.run(self.bridge.land(), timeout=60.0)
+            if self.trial_recorder is not None and self.trial_recorder.finished:
+                self.trial_recorder.record_landing_outcome('success')
             self.get_logger().info('Landed successfully.')
         except Exception as exc:
+            if self.trial_recorder is not None and self.trial_recorder.finished:
+                self.trial_recorder.record_landing_outcome('land_failed')
             self.get_logger().error(f'Action.land() failed: {exc}')
 
     def _hold_position(self):
@@ -402,6 +799,44 @@ class PathFollowerNode(Node):
         wz = max(-self.hold_max_speed, min(self.hold_max_speed, self.hold_kp * ez))
 
         self._send_world_velocity(wx, wy, wz)
+
+    def _finish_navigation_trial(self, outcome: str):
+        if self.trial_recorder is None or self.trial_recorder.finished:
+            return None
+        sim_time_s = (
+            self._last_odom_time_s
+            if self._last_odom_time_s is not None
+            else self.trial_recorder.started_at_s
+        )
+        if sim_time_s is None:
+            return None
+        try:
+            result = self.trial_recorder.finish(
+                outcome,
+                sim_time_s,
+                residual_active_at_finish=self.residual_enabled,
+            )
+        except (OSError, ValueError) as exc:
+            self.get_logger().error(f'Failed to finalize trial metrics: {exc}')
+            return None
+
+        self.get_logger().info(
+            'Navigation trial complete: '
+            f'outcome={result["outcome"]}, '
+            f'duration={result["duration_s"]:.3f}s, '
+            f'path={result["path_length_m"]:.3f}m, '
+            f'min_clearance={result["min_clearance_m"]}m')
+        if self.trial_recorder.output_path is not None:
+            self.get_logger().info(
+                f'Trial JSON: {self.trial_recorder.output_path}')
+        return result
+
+    def _stop_failed_navigation_trial(self, outcome: str):
+        self._send_world_velocity(0.0, 0.0, 0.0)
+        self._finish_navigation_trial(outcome)
+        self.state = State.ABORT
+        self.get_logger().error(
+            f'Navigation trial ended with {outcome}; zero velocity commanded.')
 
     def _send_world_velocity(self, wx: float, wy: float, wz: float):
         # World ENU -> body FRD (MAVSDK VelocityBodyYawspeed convention).
@@ -431,6 +866,22 @@ class PathFollowerNode(Node):
             self.waypoint_idx += 1
 
         return None
+
+
+    def destroy_node(self):
+        if self.trial_recorder is not None:
+            if (
+                self.trial_recorder.started
+                and not self.trial_recorder.finished
+            ):
+                self._finish_navigation_trial('aborted')
+            elif (
+                self.trial_recorder.finished
+                and self.trial_recorder.result["landing_outcome"]
+                == "in_progress"
+            ):
+                self.trial_recorder.record_landing_outcome('aborted')
+        return super().destroy_node()
 
 
 def main(args=None):

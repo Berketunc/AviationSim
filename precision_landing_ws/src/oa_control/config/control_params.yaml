@@ -26,6 +26,51 @@ path_follower_node:
     mavsdk_address: 'udpin://0.0.0.0:14540'
     timer_hz: 20.0
 
+    # ── residual RL correction (safe opt-in) ───────────────────────────────
+    # False preserves the verified classical follower byte-for-byte at the
+    # command-selection point. Enable only for paired transfer trials.
+    residual_enabled: false
+    # Empty loads the model installed under share/oa_control/models.
+    residual_policy_path: ''
+    # Isaac training used a 1.0m/s classical proposal, a 0.75m/s per-axis
+    # residual, and a 1.5m/s combined planar cap. Deployment scales all
+    # velocity quantities by cruise_speed_ms / 1.0, retaining relative
+    # residual authority while respecting this follower's conservative speed.
+    residual_training_classical_speed_ms: 1.0
+    residual_training_scale_ms: 0.75
+    residual_training_speed_cap_ms: 1.5
+    # The Isaac action scale is too aggressive for PX4/Gazebo tracking
+    # dynamics; deploy with half authority while retaining the trained shape.
+    residual_deployment_authority: 0.5
+    # Pose-difference velocity is filtered before entering the policy.
+    residual_velocity_filter_alpha: 0.35
+    residual_status_log_period_s: 10.0
+    # Prevent the learned correction from carrying the vehicle inside the
+    # planner's inflated obstacle region. The classical proposal remains
+    # admissible so the shield can only reduce residual authority.
+    residual_planner_clearance_m: 0.65
+    residual_clearance_lookahead_s: 1.0
+    # Ramp from zero residual at the guard boundary to full authority this
+    # far outside it, allowing room for PX4/Gazebo tracking lag.
+    residual_clearance_release_margin_m: 0.35
+    # Terminal navigation and marker acquisition use the proven classical
+    # follower; the residual is fully disabled inside this goal distance.
+    residual_goal_handoff_radius_m: 1.5
+    # Save anchors only this far outside obstacles. If a residual correction
+    # causes an empty replan, return to the last anchor instead of holding in
+    # an occupied start cell forever.
+    residual_recovery_clearance_m: 1.0
+
+    # ── paired Gazebo transfer metrics (safe opt-in) ───────────────────────
+    # When enabled, collision/timeout ends navigation with a zero command and
+    # writes one JSON result. Disabled during ordinary flight/landing runs.
+    trial_metrics_enabled: false
+    trial_label: ''
+    trial_output_path: ''
+    trial_timeout_s: 90.0
+    # Same analytic vehicle radius used by the Isaac evaluation.
+    trial_collision_radius_m: 0.35
+
     # ── post-obstacle-course landing phase (see MILESTONE2_STATUS.md) ──────
     # Once the A* goal is reached, hand off from waypoint-following to
     # ArUco-marker landing — reusing pl_control/landing_controller_node's

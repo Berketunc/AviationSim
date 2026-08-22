@@ -1,0 +1,212 @@
+{
+  "mode": "residual",
+  "task": "Isaac-WarehouseAvoidance-Direct-v0",
+  "checkpoint": "/home/berke/AviationSim/oa_rl/logs/rsl_rl/warehouse_avoidance_direct/2026-07-23_13-05-22_residual-penalized/model_4999.pt",
+  "checkpoint_sha256": "2a85b6e256b7bf544005c6873d1a26c3b61b031deba1a5eee54ccb28b0eb93c7",
+  "git_commit": "09727538b2651bdaf1e4cb6c8f26516952faca41",
+  "provenance": {
+    "commit": "09727538b2651bdaf1e4cb6c8f26516952faca41",
+    "dirty": true,
+    "status_porcelain": [
+      "?? oa_rl/results/evaluations/severe_full_seed42/2026-08-19_10-33-59_classical_severe.json",
+      "?? oa_rl/results/evaluations/severe_full_seed42/2026-08-19_10-33-59_classical_severe_episodes.csv",
+      "?? oa_rl/results/evaluations/severe_full_seed42/2026-08-19_10-35-22_standalone_severe.json",
+      "?? oa_rl/results/evaluations/severe_full_seed42/2026-08-19_10-35-22_standalone_severe_episodes.csv"
+    ]
+  },
+  "evaluation_source_sha256": "51afe4e9c3bfc7ecc665b2ac9064176563eeb7ef03303ff23bb7ecea459060c6",
+  "software_versions": {
+    "python": "3.11.15",
+    "torch": "2.7.0+cu128",
+    "rsl_rl_lib": "5.0.1",
+    "isaaclab": "0.54.4",
+    "isaaclab_rl": "0.5.2"
+  },
+  "seed": 42,
+  "robustness_profile": "severe",
+  "robustness_parameters": {
+    "spawn_jitter_xy_m": [
+      0.5,
+      1.25
+    ],
+    "actuator_gain_range": [
+      0.7,
+      1.3
+    ],
+    "wind_velocity_max_mps": 0.2,
+    "observation_noise_std": 0.05
+  },
+  "num_envs": 1024,
+  "episodes": 1024,
+  "sampling_protocol": {
+    "paired_first_episode_per_environment": true,
+    "scenario_id": "environment index",
+    "scenario_rng_seed": 10045,
+    "observation_noise_rng_seed": 20045
+  },
+  "step_dt_s": 0.04,
+  "wall_time_s": 15.14151007700002,
+  "control_steps": 1124,
+  "simulated_env_steps": 1150976,
+  "simulated_env_steps_per_second": 76014.61110198873,
+  "compute": {
+    "flow_field_build_ms": 35.069277000047805,
+    "classical_lookup_batch1": {
+      "mean_ms": 0.13849913580715656,
+      "p50_ms": 0.13728000223636627,
+      "p95_ms": 0.1441279947757721,
+      "iterations": 500
+    },
+    "policy_inference_batch1": {
+      "mean_ms": 0.20227532806992532,
+      "p50_ms": 0.2011519968509674,
+      "p95_ms": 0.21116800606250763,
+      "iterations": 500
+    }
+  },
+  "summary": {
+    "success_rate": 0.9990234375,
+    "collision_rate": 0.0,
+    "out_of_bounds_rate": 0.0,
+    "time_out_rate": 0.0009765625,
+    "episode_steps": {
+      "mean": 329.9580078125,
+      "std": 75.39891052246094,
+      "p50": 317.0,
+      "p95": 456.8499755859375,
+      "min": 218.0,
+      "max": 1124.0
+    },
+    "duration_s": {
+      "mean": 13.198320388793945,
+      "std": 3.015956163406372,
+      "p50": 12.679999351501465,
+      "p95": 18.273998260498047,
+      "min": 8.720000267028809,
+      "max": 44.959999084472656
+    },
+    "final_distance_to_goal_m": {
+      "mean": 0.28547602891921997,
+      "std": 0.29116156697273254,
+      "p50": 0.27908241748809814,
+      "p95": 0.2977302670478821,
+      "min": 0.22406445443630219,
+      "max": 9.584121704101562
+    },
+    "path_length_m": {
+      "mean": 17.778108596801758,
+      "std": 0.7522932887077332,
+      "p50": 17.635189056396484,
+      "p95": 19.244224548339844,
+      "min": 16.63767433166504,
+      "max": 24.344972610473633
+    },
+    "trajectory_efficiency": {
+      "mean": 0.9420340657234192,
+      "std": 0.03285742923617363,
+      "p50": 0.9478321075439453,
+      "p95": 0.9747430682182312,
+      "min": 0.6863163709640503,
+      "max": 0.9802314639091492
+    },
+    "command_variation_mps": {
+      "mean": 41.0740966796875,
+      "std": 31.840003967285156,
+      "p50": 33.463348388671875,
+      "p95": 93.54885864257812,
+      "min": 12.444497108459473,
+      "max": 658.4236450195312
+    },
+    "command_variation_rate_mps2": {
+      "mean": 3.0154495239257812,
+      "std": 1.4422107934951782,
+      "p50": 2.6749343872070312,
+      "p95": 6.116178512573242,
+      "min": 0.8140498399734497,
+      "max": 14.644654273986816
+    },
+    "min_clearance_m": {
+      "mean": 0.4145503044128418,
+      "std": 0.04653172194957733,
+      "p50": 0.44208115339279175,
+      "p95": 0.4747205972671509,
+      "min": 0.34263917803764343,
+      "max": 0.5452871322631836
+    },
+    "mean_residual_mps": {
+      "mean": 0.5519951581954956,
+      "std": 0.018194101750850677,
+      "p50": 0.5599331259727478,
+      "p95": 0.57366544008255,
+      "min": 0.5012682676315308,
+      "max": 0.5996730327606201
+    },
+    "successful_episode_count": 1023,
+    "successful_only": {
+      "duration_s": {
+        "mean": 13.167271614074707,
+        "std": 2.849174737930298,
+        "p50": 12.679999351501465,
+        "p95": 18.239999771118164,
+        "min": 8.720000267028809,
+        "max": 30.760000228881836
+      },
+      "final_distance_to_goal_m": {
+        "mean": 0.27638646960258484,
+        "std": 0.015952343121170998,
+        "p50": 0.2790684401988983,
+        "p95": 0.2977004945278168,
+        "min": 0.22406445443630219,
+        "max": 0.29998642206192017
+      },
+      "path_length_m": {
+        "mean": 17.772432327270508,
+        "std": 0.7304247617721558,
+        "p50": 17.635087966918945,
+        "p95": 19.226598739624023,
+        "min": 16.63767433166504,
+        "max": 24.344972610473633
+      },
+      "trajectory_efficiency": {
+        "mean": 0.942258894443512,
+        "std": 0.03207670524716377,
+        "p50": 0.9478377103805542,
+        "p95": 0.9747474193572998,
+        "min": 0.6863163709640503,
+        "max": 0.9802314639091492
+      },
+      "command_variation_mps": {
+        "mean": 40.47062683105469,
+        "std": 25.33497428894043,
+        "p50": 33.45833206176758,
+        "p95": 91.92778778076172,
+        "min": 12.444497108459473,
+        "max": 339.5919189453125
+      },
+      "command_variation_rate_mps2": {
+        "mean": 3.004081964492798,
+        "std": 1.3963087797164917,
+        "p50": 2.6742334365844727,
+        "p95": 6.099801063537598,
+        "min": 0.8140498399734497,
+        "max": 11.04004955291748
+      },
+      "min_clearance_m": {
+        "mean": 0.41442251205444336,
+        "std": 0.04637449234724045,
+        "p50": 0.4420759379863739,
+        "p95": 0.47460174560546875,
+        "min": 0.34263917803764343,
+        "max": 0.5104420185089111
+      },
+      "mean_residual_mps": {
+        "mean": 0.552009642124176,
+        "std": 0.01819704659283161,
+        "p50": 0.5599331259727478,
+        "p95": 0.5736674666404724,
+        "min": 0.5012682676315308,
+        "max": 0.5996730327606201
+      }
+    }
+  }
+}

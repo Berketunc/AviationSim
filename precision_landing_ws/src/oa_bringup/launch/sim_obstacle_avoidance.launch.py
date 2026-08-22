@@ -29,7 +29,10 @@ import os
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
+from launch.actions import DeclareLaunchArgument
+from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 
 # ── Gazebo topic names ─────────────────────────────────────────────────────────
 GZ_POINTCLOUD_TOPIC = '/scan/points'
@@ -70,6 +73,12 @@ LIDAR_MOUNT_XYZ = ('0', '0', '0.12')
 
 
 def generate_launch_description():
+    residual_enabled = LaunchConfiguration('residual_enabled')
+    trial_metrics_enabled = LaunchConfiguration('trial_metrics_enabled')
+    trial_label = LaunchConfiguration('trial_label')
+    trial_output_path = LaunchConfiguration('trial_output_path')
+    trial_timeout_s = LaunchConfiguration('trial_timeout_s')
+
     octomap_params = os.path.join(
         get_package_share_directory('oa_bringup'), 'config', 'octomap_params.yaml')
     planner_params = os.path.join(
@@ -78,6 +87,27 @@ def generate_launch_description():
         get_package_share_directory('oa_control'), 'config', 'control_params.yaml')
 
     return LaunchDescription([
+        DeclareLaunchArgument(
+            'residual_enabled',
+            default_value='false',
+            description='Enable the bounded residual policy correction.'),
+        DeclareLaunchArgument(
+            'trial_metrics_enabled',
+            default_value='false',
+            description='Enable collision/timeout termination and JSON metrics.'),
+        DeclareLaunchArgument(
+            'trial_label',
+            default_value='',
+            description='Label stored in the paired-transfer trial JSON.'),
+        DeclareLaunchArgument(
+            'trial_output_path',
+            default_value='',
+            description='Output JSON path for one navigation trial.'),
+        DeclareLaunchArgument(
+            'trial_timeout_s',
+            default_value='90.0',
+            description='Sim-time navigation timeout for a recorded trial.'),
+
         # Bridge Gazebo point cloud + ground-truth odometry into ROS 2.
         Node(
             package='ros_gz_bridge',
@@ -194,6 +224,19 @@ def generate_launch_description():
             name='path_follower_node',
             output='screen',
             additional_env={'PYTHONUNBUFFERED': '1'},
-            parameters=[control_params, {'odom_topic': OA_ODOMETRY_TOPIC}],
+            parameters=[
+                control_params,
+                {
+                    'odom_topic': OA_ODOMETRY_TOPIC,
+                    'residual_enabled': ParameterValue(
+                        residual_enabled, value_type=bool),
+                    'trial_metrics_enabled': ParameterValue(
+                        trial_metrics_enabled, value_type=bool),
+                    'trial_label': trial_label,
+                    'trial_output_path': trial_output_path,
+                    'trial_timeout_s': ParameterValue(
+                        trial_timeout_s, value_type=float),
+                },
+            ],
         ),
     ])

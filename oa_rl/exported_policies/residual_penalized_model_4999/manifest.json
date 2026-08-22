@@ -1,0 +1,86 @@
+{
+  "format_version": 1,
+  "policy": "penalized_residual_rl",
+  "checkpoint": {
+    "path": "/home/berke/AviationSim/oa_rl/logs/rsl_rl/warehouse_avoidance_direct/2026-07-23_13-05-22_residual-penalized/model_4999.pt",
+    "sha256": "2a85b6e256b7bf544005c6873d1a26c3b61b031deba1a5eee54ccb28b0eb93c7",
+    "iteration": 4999
+  },
+  "architecture": {
+    "input_dim": 22,
+    "hidden_dims": [
+      64,
+      64
+    ],
+    "output_dim": 2,
+    "activation": "elu",
+    "observation_normalization": false,
+    "deterministic_output": true,
+    "dtype": "float32"
+  },
+  "observation_contract": {
+    "frame": "warehouse world XY (Gazebo ENU axes)",
+    "ordering": [
+      "goal_rel_x_m",
+      "goal_rel_y_m",
+      "velocity_world_x_mps",
+      "velocity_world_y_mps",
+      "classical_velocity_world_x_mps",
+      "classical_velocity_world_y_mps",
+      "nearest_pillar_0_rel_x_m",
+      "nearest_pillar_0_rel_y_m",
+      "nearest_pillar_1_rel_x_m",
+      "nearest_pillar_1_rel_y_m",
+      "nearest_pillar_2_rel_x_m",
+      "nearest_pillar_2_rel_y_m",
+      "nearest_pillar_3_rel_x_m",
+      "nearest_pillar_3_rel_y_m",
+      "nearest_pillar_4_rel_x_m",
+      "nearest_pillar_4_rel_y_m",
+      "nearest_pillar_5_rel_x_m",
+      "nearest_pillar_5_rel_y_m",
+      "west_wall_clearance_m",
+      "east_wall_clearance_m",
+      "south_wall_clearance_m",
+      "north_wall_clearance_m"
+    ],
+    "nearest_pillars": {
+      "count": 6,
+      "ordering": "ascending Euclidean center distance",
+      "coordinates": "pillar center minus vehicle position"
+    },
+    "wall_bounds_m": {
+      "west_x": -10.0,
+      "east_x": 10.0,
+      "south_y": -7.0,
+      "north_y": 7.0
+    }
+  },
+  "action_contract": {
+    "network_output": "dimensionless residual action in world XY",
+    "per_axis_clip": [
+      -1.0,
+      1.0
+    ],
+    "residual_scale_mps": 0.75,
+    "combine": "classical_velocity_world_xy + clipped_action * residual_scale_mps",
+    "combined_planar_speed_cap_mps": 1.5,
+    "disable_behavior": "use the unmodified classical velocity command"
+  },
+  "validation": {
+    "seed": 42,
+    "samples": 4097,
+    "torchscript_max_abs_error": 0.0,
+    "numpy_max_abs_error": 1.9073486328125e-06
+  },
+  "files": {
+    "residual_actor.ts": {
+      "sha256": "1c69a44caef93583f0fbcea981a4f7b17135af32804f14a97cc4276e998b0ca1",
+      "bytes": 32810
+    },
+    "residual_actor_weights.npz": {
+      "sha256": "3d4668d82f437445d5a04ea3cd869cfd3a412342828f597d24a3acdea8b2f8cd",
+      "bytes": 24546
+    }
+  }
+}

@@ -122,6 +122,20 @@ successful episodes so an early collision cannot look artificially efficient.
 Full reports: `results/evaluations/nominal_comparison.md` and
 `results/evaluations/moderate_robustness_comparison.md`.
 
+The paired 1,024-scenario severe evaluation is also complete:
+
+| Controller | Success | Collision | Successful time (s) | Successful efficiency | Reliability-adjusted efficiency | Clearance (m) |
+|---|---:|---:|---:|---:|---:|---:|
+| Classical | 60.1% | 0.0% | 20.870 | 0.8084 | 0.4855 | 0.375 |
+| Standalone RL | 81.4% | 18.4% | 14.363 | 0.8183 | 0.6665 | 0.325 |
+| Residual RL | 99.9% | 0.0% | 13.167 | 0.9423 | 0.9413 | 0.414 |
+
+Residual RL completed 1,023 of 1,024 scenarios. It converted 408 of the
+classical controller's 409 timeouts and 187 of standalone RL's 188 collisions
+into successes. Its only failure was a bounded timeout, not a collision or
+out-of-bounds termination. Full report:
+`results/evaluations/severe_robustness_comparison.md`.
+
 ## Checkpoints and evidence
 
 - Standalone final:
@@ -138,55 +152,22 @@ Full reports: `results/evaluations/nominal_comparison.md` and
 - Moderate source JSONs: `2026-08-18_11-28-22_classical_moderate.json`,
   `2026-08-18_11-29-21_standalone_moderate.json`, and
   `2026-08-18_11-30-32_residual_moderate.json`.
+- Severe source JSONs are under
+  `results/evaluations/severe_full_seed42/`: `2026-08-19_10-33-59_classical_severe.json`,
+  `2026-08-19_10-35-22_standalone_severe.json`, and
+  `2026-08-19_10-36-27_residual_severe.json`.
 
 ## Next steps / cross-chat handoff
 
-Run from `/home/berke/AviationSim/oa_rl` with `source ~/lab/bin/activate`.
-The immediate severe matrix commands are:
+Run Isaac commands from `/home/berke/AviationSim/oa_rl` with
+`source ~/lab/bin/activate`.
 
-```bash
-python scripts/evaluate.py \
-  --task Isaac-WarehouseAvoidance-Direct-v0 \
-  --mode classical --robustness_profile severe \
-  --headless --num_envs 1024 --episodes 1024 --benchmark_iterations 500
-```
-
-```bash
-python scripts/evaluate.py \
-  --task Isaac-WarehouseAvoidance-Direct-v0 \
-  --mode standalone \
-  --checkpoint logs/rsl_rl/warehouse_avoidance_direct/2026-07-22_17-17-19/model_4999.pt \
-  --robustness_profile severe \
-  --headless --num_envs 1024 --episodes 1024 --benchmark_iterations 500
-```
-
-```bash
-python scripts/evaluate.py \
-  --task Isaac-WarehouseAvoidance-Direct-v0 \
-  --mode residual \
-  --checkpoint logs/rsl_rl/warehouse_avoidance_direct/2026-07-23_13-05-22_residual-penalized/model_4999.pt \
-  --robustness_profile severe \
-  --headless --num_envs 1024 --episodes 1024 --benchmark_iterations 500
-```
-
-Then generate the report using the three newly saved JSON paths:
-
-```bash
-python scripts/compare_robustness.py \
-  --classical results/evaluations/<classical_severe.json> \
-  --standalone results/evaluations/<standalone_severe.json> \
-  --residual results/evaluations/<residual_severe.json> \
-  --output_prefix results/evaluations/severe_robustness_comparison
-```
-
-1. Run the severe matrix and generate `severe_robustness_comparison.md` with
-   the commands above.
-2. Optionally evaluate identity-warm-start `model_50.pt`/`model_99.pt` and
+1. Optionally evaluate identity-warm-start `model_50.pt`/`model_99.pt` and
    random `model_50.pt`/`model_100.pt` under perturbations to test whether
    smaller early residual authority improves robustness.
-3. Select/export the final residual checkpoint and integrate it as a bounded
+2. Select/export the final residual checkpoint and integrate it as a bounded
    correction around the Gazebo/PX4 classical follower for sim-to-sim transfer.
-4. Run Gazebo/PX4 classical-versus-residual trials with collision, completion
+3. Run Gazebo/PX4 classical-versus-residual trials with collision, completion
    time, path length, and control-loop latency logging.
-5. Modernize the RSL-RL 4.x config warnings, then finalize plots/tables and the
+4. Modernize the RSL-RL 4.x config warnings, then finalize plots/tables and the
    report. Do not claim real-hardware validation; none was attempted.
