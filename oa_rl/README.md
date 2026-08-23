@@ -6,7 +6,7 @@ registered task is `Isaac-WarehouseAvoidance-Direct-v0`.
 
 The project now includes the residual architecture, a same-harness classical
 baseline, deterministic and perturbed evaluation, compute instrumentation, an
-identity-residual warm start, and nominal/moderate result artifacts.
+identity-residual warm start, and nominal/moderate/severe result artifacts.
 
 ## Scope and architecture
 
@@ -50,9 +50,9 @@ python -m pip install -e source/oa_rl
 - `scripts/compare_evaluations.py` — nominal three-way report.
 - `scripts/compare_robustness.py` — success-conditioned robustness report.
 
-RSL-RL 4.x prints deprecation warnings about `policy`, `distribution_cfg`, and
-`obs_groups`. They are non-fatal: actor and critic resolve to `policy` and all
-checkpoints load correctly. Modernizing the config is maintenance work.
+The runner configuration uses the RSL-RL 5.x `actor`, `critic`,
+`distribution_cfg`, and explicit `obs_groups` interface. The evaluator retains
+legacy checkpoint conversion for the selected pre-5.0 policy.
 
 ## Nominal results
 
@@ -119,8 +119,9 @@ successful episodes so an early collision cannot look artificially efficient.
 | Standalone RL | 89.7% | 10.3% | 13.629 | 0.8169 | 0.7331 | 0.233 |
 | Residual RL | 100% | 0% | 12.616 | 0.9445 | 0.9445 | 0.410 |
 
-Full reports: `results/evaluations/nominal_comparison.md` and
-`results/evaluations/moderate_robustness_comparison.md`.
+Full reports: `results/evaluations/nominal_comparison.md`,
+`results/evaluations/moderate_robustness_comparison.md`, and
+`results/evaluations/severe_robustness_comparison.md`.
 
 The paired 1,024-scenario severe evaluation is also complete:
 
@@ -157,17 +158,29 @@ out-of-bounds termination. Full report:
   `2026-08-19_10-35-22_standalone_severe.json`, and
   `2026-08-19_10-36-27_residual_severe.json`.
 
-## Next steps / cross-chat handoff
+## Gazebo/PX4 transfer status
 
-Run Isaac commands from `/home/berke/AviationSim/oa_rl` with
-`source ~/lab/bin/activate`.
+The final penalized residual checkpoint was exported to a dependency-light
+NumPy actor and integrated as an opt-in, bounded correction around the ROS 2
+classical follower. Earlier direct-transfer diagnostics exposed empty replans,
+an unsafe recovery that was removed, and a collision-safe v5 fallback that
+still timed out.
 
-1. Optionally evaluate identity-warm-start `model_50.pt`/`model_99.pt` and
-   random `model_50.pt`/`model_100.pt` under perturbations to test whether
-   smaller early residual authority improves robustness.
-2. Select/export the final residual checkpoint and integrate it as a bounded
-   correction around the Gazebo/PX4 classical follower for sim-to-sim transfer.
-3. Run Gazebo/PX4 classical-versus-residual trials with collision, completion
-   time, path length, and control-loop latency logging.
-4. Modernize the RSL-RL 4.x config warnings, then finalize plots/tables and the
-   report. Do not claim real-hardware validation; none was attempted.
+A separate offboard transport defect was then corrected: velocity setpoints now
+use latest-value semantics instead of accumulating in an unbounded FIFO. In the
+v10 equivalent-start smoke pair, both classical and residual-assisted runs
+completed navigation and ArUco precision landing. Residual-assisted v10 took
+74.18 s versus 76.52 s and followed 17.988 m versus 18.198 m, while minimum
+clearance was 0.682 m versus 0.711 m. Residual inference covered 679/1,462
+controller samples before an empty replan triggered permanent classical
+fallback.
+
+The wrapper remains bounded, clearance-shielded, disable-able, and fail-closed,
+with no unplanned recovery motion. It remains disabled by default because the
+successful Gazebo evidence is one pair and required fallback. The supported
+claim is successful guarded hybrid transfer, not uninterrupted policy transfer
+or statistical Gazebo superiority.
+
+The consolidated report, plots, raw artifacts, and generated v10 comparison are
+in `results/final_report.md`, `results/plots/`, and
+`results/gazebo_transfer/`. No real-hardware validation was attempted.

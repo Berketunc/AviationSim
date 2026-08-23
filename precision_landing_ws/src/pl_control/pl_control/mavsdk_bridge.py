@@ -15,6 +15,8 @@ import threading
 from mavsdk import System
 from mavsdk.offboard import VelocityBodyYawspeed
 
+from pl_control.setpoint_queue import consume_latest
+
 
 class MavsdkBridge:
 
@@ -80,10 +82,11 @@ class MavsdkBridge:
         await self._drone.offboard.start()
 
         while self._offboard_active:
-            try:
-                current = self.setpoint_queue.get_nowait()
-            except asyncio.QueueEmpty:
-                pass
+            # A velocity command is state, not an event: discard every stale
+            # FIFO entry and apply only the most recent producer value. With
+            # both sides nominally at 20 Hz, consuming one entry per tick let
+            # tiny scheduling differences build seconds of command latency.
+            current = consume_latest(self.setpoint_queue, current)
             try:
                 await self._drone.offboard.set_velocity_body(current)
             except Exception:

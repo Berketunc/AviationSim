@@ -1,0 +1,50 @@
+{
+  "schema_version": 5,
+  "label": "classical_landing_v10",
+  "controller": "classical",
+  "outcome": "success",
+  "success": true,
+  "collision": false,
+  "time_out": false,
+  "landing_outcome": "success",
+  "duration_s": 76.52,
+  "path_length_m": 18.198413623419356,
+  "start_position_xy": [
+    -8.483433334691671,
+    -0.008177276093898516
+  ],
+  "final_position_xy": [
+    8.290206329293687,
+    -0.062135543005709115
+  ],
+  "goal_xy": [
+    8.5,
+    0.10000000000000053
+  ],
+  "final_distance_to_goal_m": 0.2651439582079615,
+  "min_clearance_m": 0.7106351267854077,
+  "collision_radius_m": 0.35,
+  "timeout_s": 150.0,
+  "residual_active_at_finish": false,
+  "residual_fallback": false,
+  "controller_latency_ms": {
+    "mean": 0.034700240404040406,
+    "p95": 0.0510032,
+    "max": 0.278303
+  },
+  "residual_inference_latency_ms": null,
+  "mean_residual_mps": 0.0,
+  "mean_residual_shield_blend": null,
+  "shield_intervention_count": 0,
+  "residual_goal_handoff_count": 0,
+  "residual_recovery_count": 0,
+  "path_updates": {
+    "total": 86,
+    "nonempty": 77,
+    "empty": 9
+  },
+  "sample_counts": {
+    "controller": 1485,
+    "residual": 0
+  }
+}

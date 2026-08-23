@@ -10,13 +10,11 @@ specific logic in that bridge, so it's reused as-is rather than duplicated.
 
 Every new Path starts with the voxel containing the current position,
 because oa_planning_node always plans from wherever the vehicle currently is.
-The follower skips exactly that first voxel-center waypoint and resumes from
-waypoint 1, never by searching for whichever waypoint happens to be spatially
-nearest. That search used to be
-here and was a real bug: the "nearest" waypoint by raw distance can be one
-further along the path, on the far side of an obstacle the path was
-deliberately routed around, which then had this controller cut straight
-through it to reach that "closer" point.
+The follower skips that first voxel-center waypoint. If its active target is
+still one of the first two safe waypoints in the replacement path, it preserves
+that exact target instead of resetting progress every second. It never searches
+the full path for the spatially nearest waypoint: that older behavior could
+select a point on the far side of an obstacle and cut through it.
 
 Once the A* goal is reached, this hands off from waypoint-following to
 ArUco-marker landing (SEARCH_MARKER -> ALIGN_MARKER -> DESCEND_MARKER),
@@ -40,6 +38,7 @@ from geometry_msgs.msg import PoseStamped
 from nav_msgs.msg import Odometry, Path
 from std_msgs.msg import Bool
 
+from oa_control.landing_safety import should_handoff_to_land
 from oa_control.residual_policy import (
     ResidualPolicy,
     ResidualPolicyError,
@@ -48,9 +47,9 @@ from oa_control.residual_policy import (
 from pl_control.landing_controller_node import PIController
 from oa_control.trial_recorder import (
     NavigationTrialRecorder,
-    obstacle_surface_clearance,
     shield_residual_velocity,
 )
+from oa_control.waypoint_selection import select_replanned_waypoint_index
 from pl_control.mavsdk_bridge import MavsdkBridge
 
 
@@ -108,7 +107,6 @@ class PathFollowerNode(Node):
         self.declare_parameter('residual_clearance_lookahead_s', 1.0)
         self.declare_parameter('residual_clearance_release_margin_m', 0.35)
         self.declare_parameter('residual_goal_handoff_radius_m', 1.5)
-        self.declare_parameter('residual_recovery_clearance_m', 1.0)
 
         residual_requested = bool(self.get_parameter('residual_enabled').value)
         self.residual_enabled = False
@@ -133,8 +131,6 @@ class PathFollowerNode(Node):
             self.get_parameter('residual_clearance_release_margin_m').value)
         self.residual_goal_handoff_radius = float(
             self.get_parameter('residual_goal_handoff_radius_m').value)
-        self.residual_recovery_clearance = float(
-            self.get_parameter('residual_recovery_clearance_m').value)
         self.residual_velocity_scale = 1.0
         self.residual_scale = 0.0
         self.residual_speed_cap = self.cruise_speed
@@ -171,14 +167,6 @@ class PathFollowerNode(Node):
                     raise ResidualPolicyError(
                         'residual_goal_handoff_radius_m must exceed '
                         'goal_reached_radius_m')
-                if (
-                    self.residual_recovery_clearance
-                    <= self.residual_planner_clearance
-                ):
-                    raise ResidualPolicyError(
-                        'residual_recovery_clearance_m must exceed '
-                        'residual_planner_clearance_m')
-
                 configured_path = str(
                     self.get_parameter('residual_policy_path').value).strip()
                 policy_path = (
@@ -293,8 +281,6 @@ class PathFollowerNode(Node):
         self._residual_magnitude_sum = 0.0
         self._residual_shield_blend_sum = 0.0
         self._residual_shield_intervention_count = 0
-        self._residual_recovery_count = 0
-        self._residual_last_safe_position = None
         self._residual_last_status_time = time.monotonic()
 
         self.marker_pose: PoseStamped | None = None
@@ -328,30 +314,44 @@ class PathFollowerNode(Node):
 
     def _path_cb(self, msg: Path):
         previous_path_available = bool(self.path and self.path.poses)
+        previous_target = None
+        if (
+            previous_path_available
+            and 0 <= self.waypoint_idx < len(self.path.poses)
+        ):
+            target = self.path.poses[self.waypoint_idx].pose.position
+            previous_target = (target.x, target.y, target.z)
         self.path = msg
+        if (
+            self.residual_enabled
+            and previous_path_available
+            and not msg.poses
+        ):
+            self.residual_enabled = False
+            self.residual_policy = None
+            if self.trial_recorder is not None:
+                self.trial_recorder.mark_residual_fallback()
+            self.get_logger().error(
+                'Empty replan received while residual correction was active; '
+                'residual is permanently disabled and the classical follower '
+                'will resume when a valid path returns.')
         if self.trial_recorder is not None:
             self.trial_recorder.record_path_update(bool(msg.poses))
             if msg.poses:
                 goal = msg.poses[-1].pose.position
                 self.trial_recorder.set_goal((goal.x, goal.y))
-        if (
-            self.residual_enabled
-            and previous_path_available
-            and not msg.poses
-            and self._residual_last_safe_position is not None
-        ):
-            self.hold_pos = self._residual_last_safe_position
-            self._residual_recovery_count += 1
-            if self.trial_recorder is not None:
-                self.trial_recorder.record_residual_recovery()
-            self.get_logger().warn(
-                'Residual recovery activated after an empty replan: '
-                f'returning to safe anchor {self.hold_pos}.')
-        # A* includes the current start voxel as path[0]. Steering back to
-        # that voxel's center after every replan caused measurable waypoint
-        # churn. Skip exactly that known start element; do not reintroduce a
-        # nearest-waypoint search that can jump across an obstacle.
-        self.waypoint_idx = 1 if len(msg.poses) > 1 else 0
+        # A* includes the current start voxel as path[0]. Preserve the active
+        # target only if it remains within the first two safe steps of the new
+        # path. This prevents 1 Hz replans from continually resetting progress,
+        # without allowing a nearest-point search to jump across an obstacle.
+        waypoint_xyz = [
+            (pose.pose.position.x, pose.pose.position.y, pose.pose.position.z)
+            for pose in msg.poses
+        ]
+        self.waypoint_idx = select_replanned_waypoint_index(
+            waypoint_xyz,
+            previous_target,
+        )
 
     def _odom_cb(self, msg: Odometry):
         p = msg.pose.pose.position
@@ -384,16 +384,6 @@ class PathFollowerNode(Node):
         self._last_odom_time_s = stamp_s
         self.current_pos = position
         self.current_yaw = _yaw_from_quaternion(msg.pose.pose.orientation)
-
-        if (
-            self.residual_enabled
-            and self.state == State.FOLLOW
-            and self.path is not None
-            and self.path.poses
-            and obstacle_surface_clearance(position[:2])
-            >= self.residual_recovery_clearance
-        ):
-            self._residual_last_safe_position = position
 
         if self.trial_recorder is not None and self.state == State.FOLLOW:
             try:
@@ -581,8 +571,7 @@ class PathFollowerNode(Node):
                 f'samples={count}, mean_latency={mean_latency_ms:.3f}ms, '
                 f'mean_correction={mean_residual:.3f}m/s, '
                 f'mean_shield_blend={mean_shield_blend:.3f}, '
-                f'shield_interventions={self._residual_shield_intervention_count}, '
-                f'recoveries={self._residual_recovery_count}')
+                f'shield_interventions={self._residual_shield_intervention_count}')
             self._residual_last_status_time = now
 
         return float(corrected[0]), float(corrected[1])
@@ -703,6 +692,20 @@ class PathFollowerNode(Node):
             self.marker_pi_y.reset()
 
     def _do_marker_descend(self, now: float, dt: float):
+        odometry_altitude = (
+            self.current_pos[2] if self.current_pos is not None else None
+        )
+        if should_handoff_to_land(
+            None,
+            odometry_altitude,
+            self.marker_final_land_alt_m,
+        ):
+            self._begin_land(
+                "Odometry altitude "
+                f"{odometry_altitude:.3f}m is below the "
+                f"{self.marker_final_land_alt_m:.3f}m handoff threshold.")
+            return
+
         if not self._marker_visible_or_revert(now):
             return
 
@@ -723,11 +726,21 @@ class PathFollowerNode(Node):
         self.bridge.send_velocity_body(vx, vy, vz, 0.0)
         self._log_marker_status(now, 'DESCEND', dx, dy, error, dz)
 
-        if dz < self.marker_final_land_alt_m:
-            self.get_logger().info(
-                f'Below {self.marker_final_land_alt_m}m — handing off to Action.land().')
-            self.state = State.LANDED
-            threading.Thread(target=self._land_async, daemon=True).start()
+        if should_handoff_to_land(
+            dz,
+            odometry_altitude,
+            self.marker_final_land_alt_m,
+        ):
+            self._begin_land(
+                "Marker/odometry height reached the "
+                f"{self.marker_final_land_alt_m:.3f}m handoff threshold.")
+
+    def _begin_land(self, reason: str):
+        if self.state == State.LANDED:
+            return
+        self.get_logger().info(f"{reason} Handing off to Action.land().")
+        self.state = State.LANDED
+        threading.Thread(target=self._land_async, daemon=True).start()
 
     def _log_marker_status(
         self,

@@ -56,10 +56,8 @@ path_follower_node:
     # Terminal navigation and marker acquisition use the proven classical
     # follower; the residual is fully disabled inside this goal distance.
     residual_goal_handoff_radius_m: 1.5
-    # Save anchors only this far outside obstacles. If a residual correction
-    # causes an empty replan, return to the last anchor instead of holding in
-    # an occupied start cell forever.
-    residual_recovery_clearance_m: 1.0
+    # Any empty replan after residual activation permanently falls back to
+    # the classical controller; no unplanned recovery motion is attempted.
 
     # ── paired Gazebo transfer metrics (safe opt-in) ───────────────────────
     # When enabled, collision/timeout ends navigation with a zero command and
@@ -85,6 +83,9 @@ path_follower_node:
     marker_descend_vel_ms: 0.3
     marker_hacc_radius_m: 0.20
     marker_n_frames_aligned: 10
+    # Action.land() is triggered when either marker optical distance or the
+    # flat-world odometry altitude reaches this value. The redundant odometry
+    # guard covers close-range tag loss after a correctly aligned descent.
     marker_final_land_alt_m: 0.5
     # The goal (8.5, 0) is set to exactly the marker's (x, y), so the marker
     # should already be ~underfoot on arrival — this search only covers the

@@ -1,0 +1,36 @@
+{
+  "schema_version": 3,
+  "label": "residual_smoke_v3",
+  "controller": "residual",
+  "outcome": "time_out",
+  "success": false,
+  "collision": false,
+  "time_out": true,
+  "duration_s": 150.04,
+  "path_length_m": 14.676649844918131,
+  "start_position_xy": [-8.49497953837163, -0.0188704870284324],
+  "final_position_xy": [0.9437477917341193, -0.33427191581741467],
+  "goal_xy": [8.5, 0.10000000000000053],
+  "final_distance_to_goal_m": 7.5687211292126975,
+  "min_clearance_m": 0.38842872417235286,
+  "collision_radius_m": 0.35,
+  "timeout_s": 150.0,
+  "residual_active_at_finish": true,
+  "residual_fallback": false,
+  "controller_latency_ms": {
+    "mean": 0.6053043021766965,
+    "p95": 0.936936,
+    "max": 2.503841
+  },
+  "residual_inference_latency_ms": {
+    "mean": 0.5484669795134443,
+    "p95": 0.86586,
+    "max": 1.486786
+  },
+  "mean_residual_mps": 0.17664280650864272,
+  "mean_residual_shield_blend": 0.8345867342141056,
+  "shield_intervention_count": 215,
+  "residual_goal_handoff_count": 0,
+  "path_updates": {"total": 160, "nonempty": 42, "empty": 118},
+  "sample_counts": {"controller": 781, "residual": 781}
+}

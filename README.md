@@ -218,17 +218,31 @@ performance at the same budgets (0.298 and 0.526 m/s residual respectively).
 The honest conclusion is that identity pretraining controls initial policy
 authority; it is not a nominal sample-efficiency win.
 
-### Current status and next work
+### Current status and conclusion
 
-Nominal and moderate comparison artifacts are complete under
-`oa_rl/results/evaluations/`. Severe evaluation is implemented but its full
-three-controller matrix has not yet been run. Gazebo/PX4 sim-to-sim transfer
-and any real-hardware work remain unattempted.
+Nominal, moderate, and paired severe matrices are complete with 1,024 episodes
+per controller. Under severe perturbations, residual RL succeeded in
+1,023/1,024 scenarios with no collisions; classical succeeded in 615/1,024,
+and standalone RL in 834/1,024 with 188 collisions.
 
-For setup, exact checkpoints, evaluator commands, result provenance, and the
-cross-chat handoff, see [`oa_rl/README.md`](oa_rl/README.md). The detailed
-chronological research record remains in
-[`MILESTONE2_STATUS.md`](MILESTONE2_STATUS.md).
+The selected residual was exported and integrated into the Gazebo/PX4 follower
+as an opt-in bounded correction. Earlier uninterrupted transfer attempts failed:
+residual v3 timed out amid empty A* replans, experimental v4 recovery collided,
+and v5 failed closed without completing. The unsafe recovery was removed.
+
+A real-time transport defect was then fixed so offboard velocity uses the newest
+setpoint instead of accumulating stale FIFO commands. In the v10 smoke pair,
+classical and residual-assisted runs both completed navigation and ArUco
+precision landing. Residual inference covered 679/1,462 controller samples
+before safe permanent fallback. This validates the guarded hybrid pipeline, not
+uninterrupted policy transfer or statistical Gazebo superiority. Residual
+control remains disabled by default pending repeated paired trials.
+
+See [`oa_rl/results/final_report.md`](oa_rl/results/final_report.md) for the
+plots and consolidated conclusion, [`oa_rl/README.md`](oa_rl/README.md) for
+setup and provenance, and [`MILESTONE2_STATUS.md`](MILESTONE2_STATUS.md) for
+the chronological engineering record. No real-hardware validation was
+attempted.
 
 ## Optional: real-hardware test (not attempted, not committed to)
 

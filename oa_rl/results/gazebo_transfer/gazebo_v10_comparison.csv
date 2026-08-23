@@ -1,0 +1,3 @@
+controller,label,navigation_success,landing_success,outcome,landing_outcome,duration_s,path_length_m,final_distance_to_goal_m,min_clearance_m,controller_latency_mean_ms,mean_residual_mps,shield_intervention_count,residual_fallback,residual_samples,controller_samples,residual_sample_fraction
+classical,classical_landing_v10,True,True,success,success,76.52,18.198413623419356,0.2651439582079615,0.7106351267854077,0.034700240404040406,0.0,0,False,0,1485,0.0
+residual,residual_landing_v10,True,True,success,success,74.17999999999999,17.988042307009863,0.257166528216705,0.6817172721878513,0.29370590287277704,0.09525071148753372,189,True,679,1462,0.46443228454172364

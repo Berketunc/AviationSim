@@ -1,0 +1,54 @@
+{
+  "schema_version": 5,
+  "label": "residual_landing_v10",
+  "controller": "residual",
+  "outcome": "success",
+  "success": true,
+  "collision": false,
+  "time_out": false,
+  "landing_outcome": "success",
+  "duration_s": 74.17999999999999,
+  "path_length_m": 17.988042307009863,
+  "start_position_xy": [
+    -8.54154268085355,
+    -0.01884282288923456
+  ],
+  "final_position_xy": [
+    8.290873191384163,
+    -0.049668303769329486
+  ],
+  "goal_xy": [
+    8.5,
+    0.10000000000000053
+  ],
+  "final_distance_to_goal_m": 0.257166528216705,
+  "min_clearance_m": 0.6817172721878513,
+  "collision_radius_m": 0.35,
+  "timeout_s": 150.0,
+  "residual_active_at_finish": false,
+  "residual_fallback": true,
+  "controller_latency_ms": {
+    "mean": 0.29370590287277704,
+    "p95": 0.8943486500000001,
+    "max": 2.400994
+  },
+  "residual_inference_latency_ms": {
+    "mean": 0.541334029455081,
+    "p95": 0.8706175,
+    "max": 1.171704
+  },
+  "mean_residual_mps": 0.09525071148753372,
+  "mean_residual_shield_blend": 0.8977811470147224,
+  "shield_intervention_count": 189,
+  "residual_goal_handoff_count": 0,
+  "residual_recovery_count": 0,
+  "path_updates": {
+    "total": 84,
+    "nonempty": 76,
+    "empty": 8
+  },
+  "sample_counts": {
+    "controller": 1462,
+    "residual": 679
+  }
+}

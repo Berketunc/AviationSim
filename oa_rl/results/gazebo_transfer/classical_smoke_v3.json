@@ -1,0 +1,32 @@
+{
+  "schema_version": 3,
+  "label": "classical_smoke_v3",
+  "controller": "classical",
+  "outcome": "success",
+  "success": true,
+  "collision": false,
+  "time_out": false,
+  "duration_s": 96.76,
+  "path_length_m": 19.637408099766287,
+  "start_position_xy": [-8.42424817397909, -0.0040405903445523035],
+  "final_position_xy": [8.232271899986731, 0.20497399473851788],
+  "goal_xy": [8.5, 0.10000000000000053],
+  "final_distance_to_goal_m": 0.28757238238064015,
+  "min_clearance_m": 0.6766467843569173,
+  "collision_radius_m": 0.35,
+  "timeout_s": 150.0,
+  "residual_active_at_finish": false,
+  "residual_fallback": false,
+  "controller_latency_ms": {
+    "mean": 0.03245542032821599,
+    "p95": 0.048235999999999994,
+    "max": 0.155016
+  },
+  "residual_inference_latency_ms": null,
+  "mean_residual_mps": 0.0,
+  "mean_residual_shield_blend": null,
+  "shield_intervention_count": 0,
+  "residual_goal_handoff_count": 0,
+  "path_updates": {"total": 106, "nonempty": 97, "empty": 9},
+  "sample_counts": {"controller": 1889, "residual": 0}
+}

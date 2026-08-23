@@ -10,6 +10,8 @@ from sensor_msgs.msg import Image, CameraInfo
 from geometry_msgs.msg import PoseStamped
 from std_msgs.msg import Bool
 
+from pl_perception.camera_geometry import optical_translation_to_body_frd
+
 
 class ArucoDetectorNode(Node):
 
@@ -104,17 +106,10 @@ class ArucoDetectorNode(Node):
 
         tvec = tvec.flatten()
 
-        # ── Camera optical → body FRD ──────────────────────────────────────────
-        # x500_mono_cam_down mounts mono_cam with pitch=pi/2 (Ry(90 deg)) from base_link.
-        # Verified from model.sdf: camera +y_cam = body +y (right); +z_cam = body +x (fwd).
-        # OpenCV optical frame: z into scene, x right in image, y down in image.
-        #   tvec[0] = x_opt = body right
-        #   tvec[1] = y_opt = body backward  -> negate for body forward
-        #   tvec[2] = z_opt = AGL distance to marker (always positive)
-        dx_body = -tvec[1]  # body forward
-        dy_body =  tvec[0]  # body right
-        dz_body =  tvec[2]  # body down = AGL distance
-        # ─────────────────────────────────────────────────────────────────────
+        # Camera optical -> PX4 body FRD. Keep the SDF-derived transform
+        # isolated and tested; controller transport must discard stale
+        # setpoints rather than disguising command latency as a frame error.
+        dx_body, dy_body, dz_body = optical_translation_to_body_frd(tvec)
 
         pose = PoseStamped()
         pose.header.stamp = msg.header.stamp
