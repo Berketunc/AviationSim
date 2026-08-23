@@ -18,8 +18,10 @@ uninterrupted policy transfer or statistical superiority in Gazebo.
 
 ## Isaac Lab comparison
 
-Each row below is based on 1,024 episodes. Moderate and severe runs use paired
-scenario IDs across controllers. Robustness route metrics are conditioned on
+Each row below is based on 1,024 episodes. Severe runs use paired scenario IDs
+across controllers. The legacy moderate artifacts share the intended seed and
+configuration but do not record scenario IDs, so only the severe profile
+supports paired inference. Robustness route metrics are conditioned on
 success, while reliability-adjusted efficiency penalizes failures.
 
 | Profile | Controller | Success | Collision | Successful efficiency | Reliability-adjusted efficiency | Clearance (m) |
