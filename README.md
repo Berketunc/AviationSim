@@ -1,5 +1,11 @@
 # AviationSim
 
+<p align="center">
+  <a href="media/aviationsim_gazebo_px4_demo.mp4"><strong>▶ Watch the Gazebo/PX4 navigation and precision-landing demo</strong></a>
+  &nbsp;&nbsp;|&nbsp;&nbsp;
+  <a href="oa_rl/results/research_paper.pdf"><strong>📄 Read the research paper (PDF)</strong></a>
+</p>
+
 A simulation-first autonomous-drone stack built on **PX4 SITL + Gazebo Harmonic +
 ROS 2 Jazzy + MAVSDK**, developed as a series of milestones: classical
 vision-based control (Milestones 1-2), then a research pivot comparing that
